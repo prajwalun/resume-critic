@@ -17,12 +17,16 @@ import {
   TrendingUp,
   Target,
   Star,
+  MessageCircle,
+  Download,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useTheme } from "next-themes"
+import { resumeCriticAPI, type ResumeAnalysisResponse, type ResumeBullet, type ClarificationRequest } from "@/lib/api"
 
 interface CritiqueItem {
   id: string
@@ -31,6 +35,10 @@ interface CritiqueItem {
   reason: string
   category: "Impact" | "Clarity" | "Keywords" | "Format"
   impact: "High" | "Medium" | "Low"
+  bulletId?: string
+  sectionId?: string
+  needsClarification?: boolean
+  clarificationQuestion?: string
 }
 
 export default function ResumeCriticAI() {
@@ -39,40 +47,31 @@ export default function ResumeCriticAI() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [critiques, setCritiques] = useState<CritiqueItem[]>([])
   const [showResults, setShowResults] = useState(false)
+  const [analysisData, setAnalysisData] = useState<ResumeAnalysisResponse | null>(null)
+  const [clarificationModal, setClarificationModal] = useState<{
+    isOpen: boolean
+    bulletId: string
+    sectionId: string
+    question: string
+    originalText: string
+    userResponse: string
+  }>({
+    isOpen: false,
+    bulletId: "",
+    sectionId: "",
+    question: "",
+    originalText: "",
+    userResponse: "",
+  })
+  const [isProcessingClarification, setIsProcessingClarification] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const { theme, setTheme } = useTheme()
-
-  // Mock critique data for demo
-  const mockCritiques: CritiqueItem[] = [
-    {
-      id: "1",
-      original: "Responsible for managing social media accounts",
-      suggested: "Increased social media engagement by 45% across 5 platforms, driving 2,000+ monthly leads",
-      reason: "Quantify your impact with specific metrics and results to show measurable value",
-      category: "Impact",
-      impact: "High",
-    },
-    {
-      id: "2",
-      original: "Worked on various projects",
-      suggested: "Led cross-functional teams on 8+ product initiatives, delivering features used by 50K+ users",
-      reason: "Be specific about your role and the scale of your work to demonstrate leadership",
-      category: "Clarity",
-      impact: "High",
-    },
-    {
-      id: "3",
-      original: "Good communication skills",
-      suggested: "Facilitated stakeholder meetings and presented quarterly reports to C-level executives",
-      reason: "Show communication skills through concrete examples rather than generic statements",
-      category: "Keywords",
-      impact: "Medium",
-    },
-  ]
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
       setResumeFile(file)
+      setError(null)
     }
   }
 
@@ -80,11 +79,125 @@ export default function ResumeCriticAI() {
     if (!resumeFile || !jobDescription.trim()) return
 
     setIsAnalyzing(true)
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    setCritiques(mockCritiques)
-    setShowResults(true)
-    setIsAnalyzing(false)
+    setError(null)
+
+    try {
+      const response = await resumeCriticAPI.analyzeResume(
+        resumeFile,
+        jobDescription,
+        true // review mode
+      )
+
+      if (response.success) {
+        // The backend wraps the analysis data in a 'data' field
+        const analysisData = (response as any).data || response
+        setAnalysisData(analysisData)
+        
+        // Convert backend data to frontend format
+        const convertedCritiques: CritiqueItem[] = []
+        
+        if (analysisData.sections && Array.isArray(analysisData.sections)) {
+          analysisData.sections.forEach((section: any) => {
+            if (section.bullets && Array.isArray(section.bullets)) {
+              section.bullets.forEach((bullet: any) => {
+                const category = getCategoryFromScore(bullet.evaluation.overall_score)
+                const impact = getImpactFromScore(bullet.evaluation.overall_score)
+                
+                const critique: CritiqueItem = {
+                  id: bullet.id,
+                  original: bullet.original_text,
+                  suggested: bullet.improvement?.improved_text || bullet.original_text,
+                  reason: bullet.evaluation.explanation,
+                  category,
+                  impact,
+                  bulletId: bullet.id,
+                  sectionId: section.id,
+                  needsClarification: bullet.needs_clarification,
+                  clarificationQuestion: bullet.evaluation.needs_clarification?.question || "",
+                }
+                
+                convertedCritiques.push(critique)
+              })
+            }
+          })
+        }
+        
+        setCritiques(convertedCritiques)
+        setShowResults(true)
+      } else {
+        setError("Analysis failed. Please try again.")
+      }
+    } catch (error) {
+      console.error("Analysis error:", error)
+      setError(error instanceof Error ? error.message : "An unexpected error occurred")
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  const handleClarification = async (bulletId: string, sectionId: string, question: string, originalText: string) => {
+    setClarificationModal({
+      isOpen: true,
+      bulletId,
+      sectionId,
+      question,
+      originalText,
+      userResponse: "",
+    })
+  }
+
+  const handleSubmitClarification = async () => {
+    if (!analysisData || !clarificationModal.userResponse.trim()) return
+
+    setIsProcessingClarification(true)
+
+    try {
+      const request: ClarificationRequest = {
+        analysis_id: analysisData.analysis_id,
+        section_id: clarificationModal.sectionId,
+        bullet_id: clarificationModal.bulletId,
+        user_response: clarificationModal.userResponse,
+        clarification_type: "missing_metrics",
+        original_text: clarificationModal.originalText,
+        question: clarificationModal.question,
+      }
+
+      const response = await resumeCriticAPI.processClarification(request)
+
+      if (response.success) {
+        // The backend wraps the response in a 'data' field
+        const responseData = (response as any).data || response
+        
+        // Update the critique with the improved bullet
+        setCritiques(prev => prev.map(critique => {
+          if (critique.bulletId === clarificationModal.bulletId) {
+            return {
+              ...critique,
+              suggested: responseData.improved_bullet.improved_text,
+              reason: responseData.improved_bullet.improvement_explanation,
+              needsClarification: false,
+            }
+          }
+          return critique
+        }))
+
+        setClarificationModal({
+          isOpen: false,
+          bulletId: "",
+          sectionId: "",
+          question: "",
+          originalText: "",
+          userResponse: "",
+        })
+      } else {
+        setError("Failed to process clarification. Please try again.")
+      }
+    } catch (error) {
+      console.error("Clarification error:", error)
+      setError(error instanceof Error ? error.message : "An unexpected error occurred")
+    } finally {
+      setIsProcessingClarification(false)
+    }
   }
 
   const handleApply = (id: string) => {
@@ -93,6 +206,19 @@ export default function ResumeCriticAI() {
 
   const handleReject = (id: string) => {
     setCritiques((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  const getCategoryFromScore = (score: number): "Impact" | "Clarity" | "Keywords" | "Format" => {
+    if (score >= 7) return "Impact"
+    if (score >= 5) return "Clarity"
+    if (score >= 3) return "Keywords"
+    return "Format"
+  }
+
+  const getImpactFromScore = (score: number): "High" | "Medium" | "Low" => {
+    if (score >= 7) return "High"
+    if (score >= 4) return "Medium"
+    return "Low"
   }
 
   const getCategoryIcon = (category: string) => {
@@ -156,6 +282,21 @@ export default function ResumeCriticAI() {
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-6xl relative z-10">
+        {/* Error Display */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+            <p className="text-red-700 dark:text-red-300 text-sm">{error}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setError(null)}
+              className="mt-2 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+            >
+              Dismiss
+            </Button>
+          </div>
+        )}
+
         {/* Hero Section */}
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-500/10 to-amber-500/10 dark:from-orange-500/20 dark:to-amber-500/20 border border-orange-500/20 dark:border-orange-500/30 rounded-full px-4 py-2 mb-6">
@@ -183,7 +324,7 @@ export default function ResumeCriticAI() {
                   Upload Resume
                 </CardTitle>
                 <CardDescription className="text-slate-600 dark:text-gray-400">
-                  Upload your resume in PDF or text format
+                  Upload your resume in PDF, DOCX, DOC, or TXT format
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -209,7 +350,7 @@ export default function ResumeCriticAI() {
                         "Click to upload or drag and drop"
                       )}
                     </p>
-                    <p className="text-xs text-slate-500 dark:text-gray-500">PDF, TXT, DOC up to 10MB</p>
+                    <p className="text-xs text-slate-500 dark:text-gray-500">PDF, DOCX, DOC, TXT up to 10MB</p>
                   </label>
                 </div>
               </CardContent>
@@ -275,6 +416,13 @@ export default function ResumeCriticAI() {
                 <p className="text-slate-600 dark:text-gray-400">
                   Found {critiques.length} suggestions to improve your resume
                 </p>
+                {analysisData && (
+                  <div className="mt-2 flex gap-4 text-sm text-slate-500 dark:text-gray-500">
+                    <span>Overall Score: {analysisData.summary.overall_score.toFixed(1)}/10</span>
+                    <span>Strong Bullets: {analysisData.summary.strong_bullets}</span>
+                    <span>Needs Improvement: {analysisData.summary.needs_improvement}</span>
+                  </div>
+                )}
               </div>
               <Button
                 variant="outline"
@@ -283,6 +431,8 @@ export default function ResumeCriticAI() {
                   setCritiques([])
                   setResumeFile(null)
                   setJobDescription("")
+                  setAnalysisData(null)
+                  setError(null)
                 }}
                 className="border-slate-200 dark:border-gray-700 hover:bg-slate-50 dark:hover:bg-gray-800 dark:text-white transition-all duration-300 hover:scale-105"
               >
@@ -320,6 +470,15 @@ export default function ResumeCriticAI() {
                         >
                           {critique.impact} Impact
                         </Badge>
+                        {critique.needsClarification && (
+                          <Badge
+                            variant="outline"
+                            className="border-orange-300 text-orange-600 dark:border-orange-600 dark:text-orange-400"
+                          >
+                            <MessageCircle className="w-3 h-3 mr-1" />
+                            Needs Clarification
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
@@ -360,14 +519,30 @@ export default function ResumeCriticAI() {
                     </div>
 
                     <div className="flex gap-3 mt-8">
-                      <Button
-                        size="sm"
-                        onClick={() => handleApply(critique.id)}
-                        className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-                      >
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Apply
-                      </Button>
+                      {critique.needsClarification ? (
+                        <Button
+                          size="sm"
+                          onClick={() => handleClarification(
+                            critique.bulletId!,
+                            critique.sectionId!,
+                            critique.clarificationQuestion!,
+                            critique.original
+                          )}
+                          className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                        >
+                          <MessageCircle className="w-4 h-4 mr-2" />
+                          Provide Details
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => handleApply(critique.id)}
+                          className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                        >
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Apply
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -408,6 +583,76 @@ export default function ResumeCriticAI() {
           </div>
         )}
       </main>
+
+      {/* Clarification Modal */}
+      {clarificationModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-2xl backdrop-blur-xl bg-white/90 dark:bg-gray-900/90 border-white/20 dark:border-gray-800/50 shadow-2xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg dark:text-white">
+                <MessageCircle className="w-5 h-5 text-orange-500" />
+                Provide Additional Details
+              </CardTitle>
+              <CardDescription className="text-slate-600 dark:text-gray-400">
+                Help us improve this bullet point with more specific information
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-600 dark:text-gray-400 mb-2">Original Bullet:</h4>
+                <p className="text-sm text-slate-700 dark:text-gray-300 bg-slate-50 dark:bg-gray-800 p-3 rounded-lg">
+                  {clarificationModal.originalText}
+                </p>
+              </div>
+              
+              <div>
+                <h4 className="text-sm font-semibold text-slate-600 dark:text-gray-400 mb-2">Question:</h4>
+                <p className="text-sm text-slate-700 dark:text-gray-300 bg-orange-50 dark:bg-orange-900/20 p-3 rounded-lg border border-orange-200/30 dark:border-orange-800/20">
+                  {clarificationModal.question}
+                </p>
+              </div>
+              
+              <div>
+                <h4 className="text-sm font-semibold text-slate-600 dark:text-gray-400 mb-2">Your Response:</h4>
+                <Textarea
+                  value={clarificationModal.userResponse}
+                  onChange={(e) => setClarificationModal(prev => ({ ...prev, userResponse: e.target.value }))}
+                  placeholder="Provide specific details, metrics, or context..."
+                  className="min-h-[100px] resize-none bg-white/50 dark:bg-gray-800/50 border-slate-200/50 dark:border-gray-700/50 focus:border-orange-400 dark:focus:border-orange-400 transition-colors duration-300 rounded-xl dark:text-white dark:placeholder:text-gray-400"
+                />
+              </div>
+              
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => setClarificationModal(prev => ({ ...prev, isOpen: false }))}
+                  disabled={isProcessingClarification}
+                  className="border-slate-200 dark:border-gray-700 hover:bg-slate-50 dark:hover:bg-gray-800 dark:text-white"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSubmitClarification}
+                  disabled={!clarificationModal.userResponse.trim() || isProcessingClarification}
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg hover:shadow-xl transition-all duration-300"
+                >
+                  {isProcessingClarification ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Submit & Improve
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-white/20 dark:border-gray-800/50 mt-20 backdrop-blur-xl bg-white/50 dark:bg-black/50">
