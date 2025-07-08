@@ -158,12 +158,11 @@ async def analyze_resume(
                 detail=f"Analysis failed: {analysis_results.get('error', 'Unknown error')}"
             )
         analysis_data = analysis_results.get("data", {})
-        # Defensive: ensure all keys exist
         analysis_id = analysis_data.get("analysis_id") or str(uuid4())
         sections = analysis_data.get("sections", [])
         critiques = analysis_data.get("critiques", [])
         summary = analysis_data.get("summary", {})
-        # Store results for later use
+        # Store results for later use, including agent state
         analysis_results_store[analysis_id] = {
             "results": {
                 "analysis_id": analysis_id,
@@ -175,7 +174,9 @@ async def analyze_resume(
             },
             "job_description": job_description,
             "resume_text": cleaned_text,
-            "review_mode": review_mode
+            "review_mode": review_mode,
+            "sections": sections,
+            "accepted_improvements": {},
         }
         return ResumeAnalysisResponse(
             success=True,
@@ -219,6 +220,20 @@ async def process_clarification(request: ClarificationRequest):
                 status_code=500,
                 detail=f"Clarification failed: {clarification_result.get('error', 'Unknown error')}"
             )
+        # Update the improved section in the analysis store
+        updated = False
+        for section in analysis_data.get('sections', []):
+            if section.get('id') == request.section_id:
+                section['improved_section'] = clarification_result.get("improved_section", section.get('improved_section', ''))
+                section['reason'] = clarification_result.get("reason", section.get('reason', ''))
+                updated = True
+        if not updated:
+            # Optionally, add a new section if not found (should not happen)
+            analysis_data.setdefault('sections', []).append({
+                'id': request.section_id,
+                'improved_section': clarification_result.get("improved_section", ""),
+                'reason': clarification_result.get("reason", "")
+            })
         return ResumeAnalysisResponse(
             success=True,
             data={
@@ -251,17 +266,37 @@ async def generate_final_resume(request: FinalResumeRequest):
         analysis_data = analysis_results_store.get(request.analysis_id)
         if not analysis_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
-        # Log incoming accepted_changes for debugging
-        logging.info(f"Received accepted_changes: {request.accepted_changes}")
+        
+        # Validate section IDs
         valid_section_ids = {section["id"] for section in analysis_data["results"].get("sections", []) if "id" in section}
-        logging.info(f"Valid section IDs: {valid_section_ids}")
         for section_id in request.accepted_changes:
             if section_id not in valid_section_ids:
-                logging.error(f"Invalid section_id received: {section_id}")
                 raise HTTPException(status_code=422, detail=f"Invalid section_id: {section_id}")
+        
+        # Update accepted improvements in the store
+        accepted_improvements = {}
         for section_id, choice in request.accepted_changes.items():
-            resume_agent.accept_improvement(section_id, choice == "improved")
-        final_resume_text = resume_agent.generate_final_resume()
+            # Validate choice is either "improved" or "original"
+            if choice not in ["improved", "original"]:
+                raise HTTPException(status_code=422, detail=f"Invalid choice for section {section_id}. Must be 'improved' or 'original'")
+            accepted_improvements[section_id] = choice
+        
+        # Create a new ResumeAgent for this analysis
+        agent = ResumeAgent(judgment_tracer=judgment)
+        
+        # Set the sections and accepted improvements
+        agent.sections = analysis_data.get("sections", [])
+        agent.accepted_improvements = accepted_improvements
+        
+        # Generate the final resume
+        final_resume_text = agent.generate_final_resume(
+            original_resume_text=analysis_data.get("resume_text", "")
+        )
+        
+        # Store the final resume and accepted improvements
+        analysis_data['final_resume'] = final_resume_text
+        analysis_data['accepted_improvements'] = accepted_improvements
+        
         return ResumeAnalysisResponse(
             success=True,
             data={
@@ -271,7 +306,6 @@ async def generate_final_resume(request: FinalResumeRequest):
             }
         )
     except HTTPException as e:
-        # Always include a detail field in error responses
         logging.error(f"HTTPException in generate_final_resume: {e.detail}")
         raise
     except Exception as e:
@@ -303,6 +337,21 @@ async def get_analysis(analysis_id: str):
             status_code=500,
             detail=f"Error retrieving analysis: {str(e)}"
         )
+
+@safe_observe("span")
+@app.get("/api/final-resume/{analysis_id}")
+async def get_final_resume(analysis_id: str):
+    """Retrieve the last generated final resume for a given analysis_id."""
+    analysis_data = analysis_results_store.get(analysis_id)
+    if not analysis_data or 'final_resume' not in analysis_data:
+        raise HTTPException(status_code=404, detail="Final resume not found for this analysis_id")
+    return {
+        "success": True,
+        "data": {
+            "final_resume": analysis_data['final_resume'],
+            "analysis_id": analysis_id
+        }
+    }
 
 @safe_observe("span")
 @app.get("/api/health")

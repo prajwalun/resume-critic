@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from typing import Dict, List, Any, Optional
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -148,15 +149,19 @@ class ResumeAgent:
             }]
             return self.sections
     
-    def analyze_sections(self, job_description: str):
+    def analyze_sections(self, job_description: str, full_resume_text: str = ""):
         """Evaluate and suggest improvements for each section as a whole."""
         for section in self.sections:
             if not section.get("original_text"):
                 continue
-                
             prompt = ChatPromptTemplate.from_template("""
-            Analyze this resume section against the job description and provide a comprehensive evaluation and improvement suggestion.
+            You are a professional resume editor.
+            Here is the full original resume for reference:
+            """
+            + full_resume_text +
+            """
             
+            Analyze and improve the following section for clarity, impact, and formatting.
             Section Type: {content_type}
             Section Title: {title}
             Original Content:
@@ -171,13 +176,32 @@ class ResumeAgent:
             3. Provide ONE improved version of the entire section, not individual bullet points
             4. Focus on relevance to the job description, clarity, and impact
             
+            FORMATTING RULES:
+            - Use the original resume as a reference for section and entry boundaries.
+            - Clearly separate each project, job, or education entry as in the original.
+            - Do not merge multiple projects, jobs, or education entries into a single paragraph.
+            - Use headings, bold, and bullet points as appropriate for a modern resume.
+            - Output each section in a clean, human-readable, resume-ready format.
+            - Use clear section headings (e.g., "Experience", "Projects", "Education", "Skills").
+            - For each section, follow these conventions:
+              - Skills: Present as a single line or two, comma-separated or grouped by category. No bullet points per word.
+              - Projects: Project Title (bold or clear heading), tech/tools used (optional, italic or muted), 2–4 bullet points, each a full, meaningful accomplishment/impact statement.
+              - Experience: Job Title | Company | Date (bold, single line), 2–4 bullet points, each a full, meaningful accomplishment/impact statement.
+              - Education: Degree | Institution | Date (bold, single line), optional GPA, honors, coursework (as a readable line, not a bullet list).
+            - Do not break up sentences into individual bullets.
+            - Do not output random line breaks or word-by-word lists.
+            - Do not hallucinate or fabricate content. If you need clarification, ask a clear, specific question and wait for the user's input.
+            - Never invent job titles, companies, dates, or metrics.
+            - If you are unsure about a detail, ask the user for clarification before finalizing the section.
+            - Output only the improved, formatted section. Do not include explanations, commentary, or extra markup.
+            
             Return JSON with the following structure:
             {{
                 "overall_score": 0-10,
                 "category": "Experience" | "Education" | "Skills" | "Projects" | "Format",
                 "impact": "High" | "Medium" | "Low",
                 "analysis": "Detailed analysis of the section's strengths and weaknesses",
-                "improved_section": "Complete improved version of the section",
+                "improved_section": "Complete improved version of the section (resume-ready, formatted as above)",
                 "reason": "Explanation of why these improvements help",
                 "needs_clarification": {{
                     "required": true/false,
@@ -185,16 +209,9 @@ class ResumeAgent:
                     "type": "missing_metrics" | "vague_description" | "none"
                 }}
             }}
-            
-            For the improved_section, provide a complete, professional version that:
-            - Maintains all factual information from the original
-            - Improves clarity, impact, and relevance to the job
-            - Uses consistent formatting and professional language
-            - Focuses on achievements and quantifiable results when possible
             """)
             chain = prompt | self.llm | JsonOutputParser()
             logger.info(f"[DEBUG] Analyzing section {section['id']} ({section['content_type']}).")
-            
             try:
                 result = chain.invoke({
                     "content_type": section.get("content_type", "other"),
@@ -202,7 +219,6 @@ class ResumeAgent:
                     "original_text": section["original_text"],
                     "job_description": job_description
                 })
-                
                 # Update section with analysis results
                 if isinstance(section, dict):
                     section["analysis"] = result.get("analysis", "")
@@ -216,9 +232,7 @@ class ResumeAgent:
                         "question": "",
                         "type": "none"
                     })
-                
                 logger.info(f"[DEBUG] Completed analysis for section {section['id']}.")
-                
             except Exception as e:
                 logger.error(f"Error analyzing section {section.get('id', 'unknown')}: {e}")
                 # Set default values if analysis fails
@@ -303,23 +317,52 @@ class ResumeAgent:
         if isinstance(section_id, str):
             self.accepted_improvements[section_id] = "improved" if accept else "original"
     
-    def generate_final_resume(self) -> str:
-        """Generate the final resume with accepted improvements."""
+    def is_well_formatted_resume(self, resume_text: str) -> bool:
+        # Heuristic: must have at least 2 section headers, at least 2 bullet points, and no lines > 400 chars
+        section_headers = len(re.findall(r'^#+\s+\w+', resume_text, re.MULTILINE))
+        bullet_points = len(re.findall(r'^[-*]\s', resume_text, re.MULTILINE))
+        long_lines = any(len(line) > 400 for line in resume_text.split('\n'))
+        return section_headers >= 2 and bullet_points >= 2 and not long_lines
+
+    def generate_final_resume(self, original_resume_text: str = "", sample_resume_text: str = "") -> str:
+        """Generate the final resume by concatenating user-accepted/edited 'suggested' sections in order, as shown in the analysis page."""
         final_sections = []
-        
         for section in self.sections:
             if isinstance(section, dict):
                 section_id = section.get("id", "")
-                if section_id in self.accepted_improvements:
-                    if self.accepted_improvements[section_id] == "improved":
-                        final_sections.append(f"## {section.get('title', '')}\n\n{section.get('improved_section', '')}")
-                    else:
-                        final_sections.append(f"## {section.get('title', '')}\n\n{section.get('original_text', '')}")
-                else:
-                    # Default to original if no decision made
-                    final_sections.append(f"## {section.get('title', '')}\n\n{section.get('original_text', '')}")
+                title = section.get('title', '')
+                
+                # Determine which version to use based on accepted_improvements
+                use_improved = (
+                    section_id in self.accepted_improvements and 
+                    self.accepted_improvements[section_id] == "improved"
+                )
+                
+                # Get the appropriate content
+                content = section.get('improved_section', '') if use_improved else section.get('original_text', '')
+                
+                # Skip empty sections
+                if not content.strip():
+                    continue
+                    
+                # Ensure proper section formatting
+                if not content.startswith('##'):
+                    content = f"## {title}\n\n{content}"
+                
+                # Clean up formatting
+                content = content.replace('\n\n\n', '\n\n')  # Remove extra newlines
+                content = content.strip()
+                
+                final_sections.append(content)
         
-        return "\n\n".join(final_sections)
+        # Join sections with consistent spacing
+        final_resume = "\n\n".join(final_sections)
+        
+        # Final cleanup
+        final_resume = final_resume.replace('\n\n\n', '\n\n')  # Remove any remaining triple newlines
+        final_resume = final_resume.strip()
+        
+        return final_resume
     
     async def analyze_resume(self, resume_text: str, job_description: str, review_mode: bool = True) -> Dict[str, Any]:
         """
@@ -332,7 +375,7 @@ class ResumeAgent:
             logger.info(f"Extracted {len(job_keywords)} job keywords")
             sections = self.parse_resume(resume_text)
             logger.info(f"Parsed resume into {len(sections)} sections")
-            self.analyze_sections(job_description)
+            self.analyze_sections(job_description, full_resume_text=resume_text)
             logger.info("Completed section analysis")
             total_sections = len(self.sections)
             sections_needing_clarification = 0

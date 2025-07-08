@@ -1,8 +1,6 @@
 "use client"
 
-import React from "react"
-
-import { useState } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import {
   Upload,
   FileText,
@@ -24,6 +22,12 @@ import {
   Code,
   Building2,
   Sparkles,
+  ArrowRight,
+  Lightbulb,
+  Shield,
+  Clock,
+  Users,
+  BarChart3,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -32,8 +36,11 @@ import { Badge } from "@/components/ui/badge"
 import { useTheme } from "next-themes"
 import { resumeCriticAPI, type ResumeAnalysisResponse, type ResumeBullet, type ClarificationRequest } from "@/lib/api"
 import { useRouter } from 'next/navigation'
-import { cleanResumeMarkdown } from "./resume-preview/page";
+import { cleanResumeMarkdown } from "./resume-preview/page"
+import renderSection from "./resume-preview/page"
 import remarkGfm from "remark-gfm";
+import { formatResumeSections } from "./resume-preview/page";
+import ReactMarkdown from 'react-markdown';
 
 interface CritiqueItem {
   id: string
@@ -113,13 +120,11 @@ export default function ResumeCriticAI() {
       )
 
       if (response.success) {
-        // The backend wraps the analysis data in a 'data' field
         const analysisData = (response as any).data || response
         console.log("Analysis response:", response)
         console.log("Analysis data:", analysisData)
         setAnalysisData(analysisData)
         
-        // The backend now provides critiques directly
         if (analysisData.critiques && Array.isArray(analysisData.critiques)) {
           const convertedCritiques: CritiqueItem[] = analysisData.critiques.map((critique: any) => ({
             id: critique.id,
@@ -147,7 +152,7 @@ export default function ResumeCriticAI() {
       console.error("Analysis error:", error)
       setError(error instanceof Error ? error.message : "An unexpected error occurred")
     } finally {
-      setIsAnalyzing(false)
+    setIsAnalyzing(false)
     }
   }
 
@@ -178,10 +183,8 @@ export default function ResumeCriticAI() {
       const response = await resumeCriticAPI.processClarification(request)
 
       if (response.success) {
-        // The backend wraps the response in a 'data' field
         const responseData = (response as any).data || response
         
-        // Update the critique with the improved section
         setCritiques(prev => prev.map(critique => {
           if (critique.sectionId === clarificationModal.sectionId) {
             return {
@@ -213,20 +216,20 @@ export default function ResumeCriticAI() {
   }
 
   const handleAccept = (id: string) => {
-    setCritiques((prev) => prev.map((c) => 
-      c.id === id ? { ...c, status: "accepted" } : c
+    setCritiques(prev => prev.map(critique => 
+      critique.id === id ? { ...critique, status: "accepted" } : critique
     ))
   }
 
   const handleReject = (id: string) => {
-    setCritiques((prev) => prev.map((c) => 
-      c.id === id ? { ...c, status: "rejected" } : c
+    setCritiques(prev => prev.map(critique => 
+      critique.id === id ? { ...critique, status: "rejected" } : critique
     ))
   }
 
   const handleUndo = (id: string) => {
-    setCritiques((prev) => prev.map((c) => 
-      c.id === id ? { ...c, status: "pending" } : c
+    setCritiques(prev => prev.map(critique => 
+      critique.id === id ? { ...critique, status: "pending" } : critique
     ))
   }
 
@@ -238,54 +241,64 @@ export default function ResumeCriticAI() {
         critiqueId: id,
         originalText: critique.original,
         suggestedText: critique.suggested,
-        editedText: critique.suggested
+        editedText: critique.suggested,
       })
     }
   }
 
   const handleSaveEdit = () => {
-    setCritiques((prev) => prev.map((c) => 
-      c.id === editModal.critiqueId 
-        ? { ...c, status: "edited", editedText: editModal.editedText }
-        : c
+    setCritiques(prev => prev.map(critique => 
+      critique.id === editModal.critiqueId 
+        ? { ...critique, status: "edited", editedText: editModal.editedText }
+        : critique
     ))
     setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })
   }
 
   const handleGenerateFinalResume = async () => {
-    if (!analysisData) return;
-    setIsGeneratingFinal(true);
+    if (!analysisData) return
+
+    setIsGeneratingFinal(true)
+
     try {
-      const acceptedChanges: Record<string, string> = {};
-      critiques.forEach(critique => {
-        if (critique.sectionId) {
-          acceptedChanges[critique.sectionId] =
-            critique.status === "accepted" || critique.status === "edited"
-              ? "improved"
-              : "original";
-        }
-      });
+      const acceptedChanges = critiques
+        .filter(critique => critique.status === "accepted" || critique.status === "edited" || critique.status === "rejected")
+        .reduce((acc, critique) => {
+          // Send "improved" for accepted/edited and "original" for rejected
+          acc[critique.sectionId || critique.id] = (critique.status === "accepted" || critique.status === "edited") ? "improved" : "original"
+          return acc
+        }, {} as Record<string, string>)
+
       const response = await resumeCriticAPI.generateFinalResume({
         analysis_id: (analysisData as any).analysis_id,
         accepted_changes: acceptedChanges
-      });
+      })
+
       if (response.success) {
-        // Navigate to /resume-preview with base64-encoded resume
-        const finalResumeText = (response as any).final_resume || (response as any).data?.final_resume || "";
-        const encoded = btoa(unescape(encodeURIComponent(finalResumeText)));
-        router.push(`/resume-preview?data=${encoded}`);
+        const finalResumeData = (response as any).data || response
+        setFinalResume(finalResumeData.final_resume)
+        setShowFinalResume(true)
+        // Store in sessionStorage for preview fallback
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.setItem('last_final_resume', finalResumeData.final_resume || '')
+          window.sessionStorage.setItem('last_analysis_id', finalResumeData.analysis_id || '')
+        }
+      } else {
+        setError("Failed to generate final resume. Please try again.")
       }
     } catch (error) {
-      setError("Failed to generate final resume. Please try again.");
+      console.error("Final resume generation error:", error)
+      setError(error instanceof Error ? error.message : "An unexpected error occurred")
     } finally {
-      setIsGeneratingFinal(false);
+      setIsGeneratingFinal(false)
     }
-  };
+  }
 
   const getCategoryFromScore = (score: number): "Experience" | "Education" | "Skills" | "Projects" | "Format" => {
-    if (score >= 7) return "Experience"
-    if (score >= 5) return "Education"
-    if (score >= 3) return "Skills"
+    if (score >= 80) return "Experience"
+    if (score >= 60) return "Education"
+    if (score >= 40) return "Skills"
+    if (score >= 20) return "Projects"
     return "Format"
   }
 
@@ -297,694 +310,714 @@ export default function ResumeCriticAI() {
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
-      case "Impact":
-        return <TrendingUp className="w-4 h-4" />
-      case "Clarity":
-        return <Target className="w-4 h-4" />
-      case "Keywords":
-        return <Zap className="w-4 h-4" />
-      case "Format":
-        return <Star className="w-4 h-4" />
-      case "Experience":
-        return <Briefcase className="w-4 h-4" />
-      case "Education":
-        return <GraduationCap className="w-4 h-4" />
-      case "Skills":
-        return <Code className="w-4 h-4" />
-      case "Projects":
-        return <Building2 className="w-4 h-4" />
-      default:
-        return <Brain className="w-4 h-4" />
+      case "Experience": return <Briefcase className="w-4 h-4" />
+      case "Education": return <GraduationCap className="w-4 h-4" />
+      case "Skills": return <Code className="w-4 h-4" />
+      case "Projects": return <Building2 className="w-4 h-4" />
+      case "Format": return <FileText className="w-4 h-4" />
+      default: return <FileText className="w-4 h-4" />
     }
   }
 
   const getCategoryColor = (category: string) => {
     switch (category) {
-      case "Impact":
-        return "bg-gradient-to-r from-emerald-500 to-green-500"
-      case "Clarity":
-        return "bg-gradient-to-r from-orange-500 to-amber-500"
-      case "Keywords":
-        return "bg-gradient-to-r from-yellow-500 to-orange-500"
-      default:
-        return "bg-gradient-to-r from-red-500 to-pink-500"
+      case "Experience": return "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+      case "Education": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+      case "Skills": return "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
+      case "Projects": return "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300"
+      case "Format": return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
+      default: return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
     }
   }
 
-  // UI/UX Overhaul: Accordion, Two-Column, Formatting, Clarification
-  // Placeholder Accordion/Modal components (replace with your UI lib as needed)
-  const Accordion = ({ children }: { children: React.ReactNode }) => <div>{children}</div>;
-  const AccordionItem = ({ title, children }: { title: string; children: React.ReactNode }) => {
-    const [open, setOpen] = React.useState(false);
-    return (
-      <div className="mb-4 border rounded-lg">
-        <button className="w-full text-left px-4 py-2 font-semibold bg-slate-100 dark:bg-slate-800" onClick={() => setOpen(o => !o)}>
-          {title}
-        </button>
-        {open && <div className="p-4 bg-white dark:bg-slate-900">{children}</div>}
+  const getImpactColor = (impact: string) => {
+    switch (impact) {
+      case "High": return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+      case "Medium": return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+      case "Low": return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+      default: return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
+    }
+  }
+
+  // Modern Modal Component
+  const Modal = ({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) => {
+    if (!open) return null;
+
+    useEffect(() => {
+      const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", handleKey);
+      return () => document.removeEventListener("keydown", handleKey);
+    }, [onClose]);
+
+  return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          {children}
+        </div>
       </div>
     );
   };
-  const Modal = ({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) => {
-    React.useEffect(() => {
-      if (!open) return;
-      const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-      window.addEventListener("keydown", handleKey);
-      return () => window.removeEventListener("keydown", handleKey);
-    }, [open, onClose]);
-    return open ? (
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-lg min-w-[300px] max-w-lg relative" onClick={e => e.stopPropagation()}>
-          {children}
-          <button aria-label="Close modal" className="absolute top-2 right-2 text-slate-400 hover:text-slate-700 dark:hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-full" onClick={onClose}>
-            <span aria-hidden>×</span>
-          </button>
-        </div>
-      </div>
-    ) : null;
-  };
 
-  // Enhanced formatting for resume sections and highlighting differences
   function formatResumeSection(text: string, highlightDiffs: boolean = false, diffLines: Set<number> = new Set()) {
-    // Split into lines, detect bullets, job titles, dates, etc.
-    return text.split(/\n|\r/).map((line, i) => {
-      const trimmed = line.trim();
-      if (!trimmed) return null;
-      // Section header (e.g., EXPERIENCE, EDUCATION)
-      if (/^[A-Z][A-Z\s]+$/.test(trimmed) && trimmed.length < 30) {
-        return <div key={i} className="mt-6 mb-2 text-lg font-bold tracking-wide text-blue-700 dark:text-blue-300 uppercase">{trimmed}</div>;
-      }
-      // Job title + company + date (simple heuristic)
-      if (/^.+ at .+\s+\(.+\)$/.test(trimmed)) {
-        return <div key={i} className="font-semibold text-slate-800 dark:text-slate-100 flex flex-wrap gap-2 items-center mb-1">
-          <span>{trimmed}</span>
-        </div>;
-      }
-      // Bullet point
-      if (/^[-*•]/.test(trimmed)) {
-        return <li key={i} className={`ml-8 list-disc text-base leading-relaxed ${highlightDiffs && diffLines.has(i) ? 'bg-yellow-100 dark:bg-yellow-900/30 font-semibold' : ''}`}>{trimmed.replace(/^[-*•]\s*/, "")}</li>;
-      }
-      // Date line
-      if (/\d{4}/.test(trimmed) && trimmed.length < 20) {
-        return <div key={i} className="text-xs text-slate-500 dark:text-slate-400 mb-1">{trimmed}</div>;
-      }
-      // Default
-      return <div key={i} className={`mb-1 text-base ${highlightDiffs && diffLines.has(i) ? 'bg-yellow-100 dark:bg-yellow-900/30 font-semibold' : ''}`}>{trimmed}</div>;
-    });
+    if (!text) return ""
+    
+    const lines = text.split('\n')
+    return lines.map((line, index) => {
+      const isDiffLine = diffLines.has(index)
+      const className = highlightDiffs && isDiffLine 
+        ? "bg-emerald-100 dark:bg-emerald-900/30 border-l-4 border-emerald-500 pl-3 py-1 rounded-r-lg" 
+        : ""
+      
+      return (
+        <div key={index} className={className}>
+          {line || '\u00A0'}
+        </div>
+      )
+    })
   }
 
-  // Helper to compute line diffs (very basic, for demo)
   function getDiffLines(original: string, suggested: string): Set<number> {
-    const origLines = original.split(/\n|\r/).map(l => l.trim());
-    const suggLines = suggested.split(/\n|\r/).map(l => l.trim());
-    const diff = new Set<number>();
-    suggLines.forEach((line, i) => {
-      if (line && (!origLines[i] || origLines[i] !== line)) diff.add(i);
-    });
-    return diff;
+    const originalLines = original.split('\n')
+    const suggestedLines = suggested.split('\n')
+    const diffLines = new Set<number>()
+    
+    suggestedLines.forEach((line, index) => {
+      if (originalLines[index] !== line) {
+        diffLines.add(index)
+      }
+    })
+    
+    return diffLines
   }
 
-  // Enhanced section review UI: card-based, side-by-side, clean formatting
+  // Utility to parse a section into heading and content
+  function parseSection(section: string) {
+    const lines = section.trim().split(/\n+/);
+    const heading = lines[0]?.replace(/^#+\s*/, "").trim();
+    const content = lines.slice(1).join("\n").trim();
+    return { heading, content };
+  }
+
+  // Utility to render a section with proper formatting
+  function renderSection(section: string, i: number) {
+    const { heading, content } = parseSection(section);
+    // Skills/Technologies/Tools: chips
+    if (/skills|technologies|tools|languages|certifications/i.test(heading || "")) {
+      const items = content.split(/[,•\-\n]+/).map(s => s.trim()).filter(Boolean);
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <ul className="resume-list flex flex-wrap gap-2">
+            {items.map((item, idx) => <li key={idx} className="resume-chip bg-emerald-50 text-emerald-800 px-3 py-1 rounded-full text-sm font-medium border border-emerald-100">{item}</li>)}
+          </ul>
+        </section>
+      );
+    }
+    // Experience/Projects/Education: block entries
+    if (/projects|experience|education/i.test(heading || "")) {
+      // Split by double newlines or project markers
+      const entries = content.split(/\n{2,}|(?=^([A-Z][^\n]+\|[^\n]+|\*\*.+\*\*))/gm).map(e => e.trim()).filter(Boolean);
+      // Track subheadings to avoid repetition
+      const seenSubheadings = new Set();
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <div className="space-y-8">
+            {entries.map((entry, idx) => {
+              // Remove markdown bold/italic artifacts
+              let cleanEntry = entry.replace(/\*\*|__/g, '').replace(/\*/g, '');
+              // Try to split job/project/degree line and details
+              const [firstLine, ...rest] = cleanEntry.split('\n');
+              let title = firstLine, meta = '', details = rest.join('\n').trim();
+              // For education, try to split degree, institution, date/location
+              if (/education/i.test(heading || "")) {
+                const eduMatch = firstLine.match(/^(.*?)(?:,|\|)(.*?)(\d{4}.*)?$/);
+                if (eduMatch) {
+                  title = eduMatch[1].trim();
+                  meta = [eduMatch[2], eduMatch[3]].filter(Boolean).join(' | ').trim();
+                }
+              } else {
+                // For experience/projects
+                const match = firstLine.match(/^(.*?\|.*?)\|\s*(.*?\d{4}.*?)\s*(.*)$/);
+                if (match) {
+                  title = match[1].trim();
+                  meta = match[2].trim();
+                  details = (match[3] + '\n' + details).trim();
+                }
+              }
+              // Remove repeated subheadings (e.g., 'Relevant Coursework')
+              let detailsNode = null;
+              let lines = details.split(/\n/).map(l => l.trim()).filter(Boolean);
+              lines = lines.filter(line => {
+                const lower = line.toLowerCase();
+                if (/^(relevant coursework|achievements?|responsibilities?|skills?):?$/i.test(lower)) {
+                  if (seenSubheadings.has(lower)) return false;
+                  seenSubheadings.add(lower);
+                }
+                return true;
+              });
+              // If details look like a list or comma-separated, render as bullets
+              if (lines.length > 1 || /,/.test(details)) {
+                let items = lines;
+                if (lines.length === 1 && /,/.test(lines[0])) {
+                  items = lines[0].split(/,|•|\u2022/).map(s => s.trim()).filter(Boolean);
+                }
+                detailsNode = (
+                  <ul className="list-disc ml-6 space-y-1">
+                    {items.map((l, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{l}</li>)}
+                  </ul>
+                );
+              } else if (details) {
+                detailsNode = <div className="text-slate-700 text-base leading-relaxed font-normal whitespace-pre-line">{details}</div>;
+              }
+              return (
+                <div key={idx} className="mb-4">
+                  <div className="font-bold text-lg text-slate-900 mb-1">{title}</div>
+                  {meta && <div className="text-slate-500 text-sm mb-1">{meta}</div>}
+                  {detailsNode}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    }
+    // Default: paragraph or list
+    if (new RegExp('^[-*] ', 'm').test(content) || /,/.test(content)) {
+      let items = content.split(/\n/).map(l => l.trim()).filter(Boolean);
+      if (items.length === 1 && /,/.test(items[0])) {
+        items = items[0].split(/,|•|\u2022/).map(s => s.trim()).filter(Boolean);
+      }
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <ul className="list-disc ml-6 space-y-1">
+            {items.map((l, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{l}</li>)}
+          </ul>
+        </section>
+      );
+    }
+    return (
+      <section key={i} className="resume-section mb-10">
+        <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+        <div className="text-slate-700 text-base leading-relaxed font-normal whitespace-pre-line">{content}</div>
+      </section>
+    );
+  }
+
+  function renderFormattedSectionFromMarkdown(md: string) {
+    return (
+      <div className="prose max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  function preprocessForMarkdown(text: string, fallbackHeading: string) {
+    if (!text) return '';
+    let md = text.trim();
+    // If no heading, add one
+    if (!/^#+ /.test(md)) {
+      md = `## ${fallbackHeading}\n` + md;
+    }
+    // For experience/education/projects, don't bulletize, just preserve structure
+    if (/(experience|education|project)/i.test(fallbackHeading)) {
+      return md;
+    }
+    // If not already markdown bullets, but has multiple sentences, try to bulletize
+    if (!/\n[-*] /.test(md) && /\n/.test(md)) {
+      const lines = md.split('\n').map(l => l.trim());
+      if (lines.length > 2) {
+        const heading = lines[0];
+        const rest = lines.slice(1).map(l => l ? `- ${l}` : '').join('\n');
+        md = `${heading}\n${rest}`;
+      }
+    }
+    return md;
+  }
+
+  // Add a new utility to further clean and format resume markdown for display
+  function formatResumeMarkdown(md: string) {
+    // Remove duplicate subheadings within a section
+    md = md.replace(/(Relevant Coursework:)([\s\S]*?)(?=Relevant Coursework:|$)/g, (block: string) => {
+      // Only keep the first 'Relevant Coursework:' per section
+      const lines = block.split('\n');
+      const seen = new Set();
+      return lines.filter((line: string) => {
+        if (/^Relevant Coursework:/i.test(line)) {
+          if (seen.has('rc')) return false;
+          seen.add('rc');
+        }
+        return true;
+      }).join('\n');
+    });
+    // Bulletize comma-separated lists
+    md = md.replace(/(Relevant Coursework:|Skills:|Technologies:|Tools:|Languages:|Achievements:|Responsibilities:)[ \t]*\n?([^-\n][^\n]*)/gi, (match: string, heading: string, items: string) => {
+      if (!items) return match;
+      const bullets = items.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
+      if (bullets.length > 1) {
+        return `${heading}\n` + bullets.map((b: string) => `- ${b}`).join('\n');
+      }
+      return match;
+    });
+    // Bulletize any line with multiple comma-separated items (not already a list)
+    md = md.replace(/^(?![-*] )([^\n]+,[^\n]+)$/gm, (line: string) => {
+      const items = line.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
+      if (items.length > 1) {
+        return items.map((b: string) => `- ${b}`).join('\n');
+      }
+      return line;
+    });
+    // Remove extra blank lines
+    md = md.replace(/\n{3,}/g, '\n\n');
+    return md;
+  }
+
   const renderCritiques = () => (
-    <div className="space-y-8">
-      {critiques.map((critique, idx) => {
-        const isEdited = critique.status === "edited";
-        const isAccepted = critique.status === "accepted";
-        const ReactMarkdown = require('react-markdown').default;
-        return (
-          <div key={critique.id} className="bg-white dark:bg-slate-900 rounded-2xl shadow border border-slate-200 dark:border-slate-700 p-6 flex flex-col gap-4">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-lg font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-2">
-                {getCategoryIcon(critique.category)}
-                {critique.category} Suggestion
-              </span>
-              <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${isAccepted ? 'bg-green-100 text-green-700' : isEdited ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{critique.status.charAt(0).toUpperCase() + critique.status.slice(1)}</span>
-              {critique.impact && <span className="ml-2 px-2 py-0.5 rounded text-xs font-medium bg-yellow-50 text-yellow-700">{critique.impact} Impact</span>}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Original */}
-              <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-                <h4 className="font-semibold mb-2 text-slate-700 dark:text-slate-300 text-base flex items-center gap-2"><XCircle className="w-4 h-4 text-red-400" />Original</h4>
-                <div className="text-sm leading-relaxed whitespace-pre-line prose prose-slate max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: (props: React.PropsWithChildren<any>) => <h1 className="text-2xl font-bold mt-8 mb-4 border-b border-slate-200 pb-2" {...props} />,
-                      h2: (props: React.PropsWithChildren<any>) => <h2 className="text-xl font-bold mt-6 mb-3 text-blue-700" {...props} />,
-                      h3: (props: React.PropsWithChildren<any>) => <h3 className="text-lg font-semibold mt-4 mb-2 text-blue-600" {...props} />,
-                      ul: (props: React.PropsWithChildren<any>) => <ul className="list-disc ml-6 mb-2" {...props} />,
-                      li: (props: React.PropsWithChildren<any>) => <li className="mb-1" {...props} />,
-                      strong: (props: React.PropsWithChildren<any>) => <strong className="font-bold text-slate-900" {...props} />,
-                      em: (props: React.PropsWithChildren<any>) => <em className="italic text-slate-700" {...props} />,
-                      p: (props: React.PropsWithChildren<any>) => <p className="mb-2" {...props} />,
-                    }}
-                  >
-                    {cleanResumeMarkdown(critique.original)}
-                  </ReactMarkdown>
-                </div>
-              </div>
-              {/* Suggested */}
-              <div className="bg-green-50 dark:bg-green-900/10 rounded-xl p-4 border border-green-100 dark:border-green-800">
-                <h4 className="font-semibold mb-2 text-slate-700 dark:text-slate-300 text-base flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500" />Suggested</h4>
-                <div className="text-sm leading-relaxed whitespace-pre-line font-medium prose prose-slate max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: (props: React.PropsWithChildren<any>) => <h1 className="text-2xl font-bold mt-8 mb-4 border-b border-slate-200 pb-2" {...props} />,
-                      h2: (props: React.PropsWithChildren<any>) => <h2 className="text-xl font-bold mt-6 mb-3 text-blue-700" {...props} />,
-                      h3: (props: React.PropsWithChildren<any>) => <h3 className="text-lg font-semibold mt-4 mb-2 text-blue-600" {...props} />,
-                      ul: (props: React.PropsWithChildren<any>) => <ul className="list-disc ml-6 mb-2" {...props} />,
-                      li: (props: React.PropsWithChildren<any>) => <li className="mb-1" {...props} />,
-                      strong: (props: React.PropsWithChildren<any>) => <strong className="font-bold text-slate-900" {...props} />,
-                      em: (props: React.PropsWithChildren<any>) => <em className="italic text-slate-700" {...props} />,
-                      p: (props: React.PropsWithChildren<any>) => <p className="mb-2" {...props} />,
-                    }}
-                  >
-                    {cleanResumeMarkdown(critique.status === "edited" ? critique.editedText || critique.suggested : critique.suggested)}
-                  </ReactMarkdown>
-                </div>
-                {critique.needsClarification && (
-                  <Button
-                    variant="secondary"
-                    className="mt-3 px-3 py-1 text-orange-700 bg-orange-100 hover:bg-orange-200 border border-orange-200"
-                    onClick={() => handleClarification(critique.sectionId!, critique.clarificationQuestion!, critique.original)}
-                  >
-                    <MessageCircle className="w-4 h-4 mr-1" /> Provide Context
-                  </Button>
-                )}
-              </div>
-            </div>
-            {/* Action buttons */}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button onClick={() => handleAccept(critique.id)} disabled={isAccepted} variant="default" className="min-w-[140px]">Accept Suggestion</Button>
-              <Button onClick={() => handleReject(critique.id)} disabled={critique.status === "rejected"} variant="destructive" className="min-w-[100px]">Reject</Button>
-              <Button onClick={() => handleEdit(critique.id)} variant="secondary" className="min-w-[80px]">Edit</Button>
-              {critique.status !== "pending" && (
-                <Button onClick={() => handleUndo(critique.id)} variant="outline" className="min-w-[80px]">Undo</Button>
-              )}
-            </div>
-            {critique.reason && (
-              <div className="mt-2 text-xs text-slate-500">Why: {critique.reason}</div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  // Final resume preview (formatted, scrollable, downloadable)
-  const renderFinalResume = () => (
-    <Modal open={showFinalResume} onClose={() => setShowFinalResume(false)}>
-      <div className="max-h-[80vh] overflow-y-auto p-6 bg-white dark:bg-slate-900 rounded-lg shadow-lg min-w-[350px] max-w-2xl mx-auto border border-slate-200 dark:border-slate-700" id="resume-preview">
-        <div className="prose dark:prose-invert max-w-none">
-          {finalResume.split(/\n{2,}/).map((section, i) => (
-            <div key={i} className="mb-6">
-              {section.split(/\n/).map((line, j) =>
-                j === 0 ? <h3 key={j} className="mt-0 text-lg font-bold tracking-wide text-blue-700 dark:text-blue-300 uppercase">{line.replace(/^#+\s*/, "")}</h3>
-                : line.trim().startsWith("-") ? <li key={j} className="ml-8 list-disc text-base leading-relaxed">{line.replace(/^[-*•]\s*/, "")}</li>
-                : <div key={j} className="mb-1 text-base">{line}</div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* Download as PDF button */}
-      <button
-        className="mt-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded shadow-lg font-semibold disabled:opacity-60"
-        disabled={isPdfLoading}
-        onClick={async () => {
-          setIsPdfLoading(true);
-          try {
-            const element = document.getElementById('resume-preview');
-            if (element) {
-              // @ts-ignore
-              const html2pdf = (await import('html2pdf.js')).default;
-              await html2pdf().from(element).set({
-                margin: 0.5,
-                filename: 'ResumeWise-Resume.pdf',
-                html2canvas: { scale: 2 },
-                jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
-              }).save();
-            }
-          } finally {
-            setIsPdfLoading(false);
-          }
-        }}
-      >
-        {isPdfLoading ? (
-          <span className="flex items-center"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />Generating PDF...</span>
-        ) : (
-          <><Download className="w-5 h-5 mr-2 inline" />Download as PDF</>
-        )}
-      </button>
-    </Modal>
-  );
-
-  // Loading spinner overlay
-  const LoadingOverlay = ({ show, text }: { show: boolean; text?: string }) => show ? (
-    <div className="fixed inset-0 bg-black/30 z-[100] flex flex-col items-center justify-center">
-      <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4" />
-      {text && <div className="text-white text-lg font-semibold drop-shadow-lg">{text}</div>}
-    </div>
-  ) : null;
-
-  // Confetti/checkmark indicator
-  const SuccessIndicator = ({ show }: { show: boolean }) => show ? (
-    <div className="fixed inset-0 flex items-center justify-center z-[200] pointer-events-none">
-      <div className="bg-white/80 dark:bg-slate-900/80 rounded-full p-8 shadow-xl flex flex-col items-center animate-bounce-in">
-        <CheckCircle className="w-16 h-16 text-green-500 mb-2 animate-pulse" />
-        <div className="text-xl font-bold text-green-700 dark:text-green-300">Resume Ready!</div>
-      </div>
-    </div>
-  ) : null;
-
-  // Tooltip wrapper
-  const Tooltip = ({ text, children }: { text: string; children: React.ReactNode }) => (
-    <span className="relative group">
-      {children}
-      <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-50">
-        {text}
-      </span>
-    </span>
-  );
-
-  return (
-    <div className="min-h-screen font-sans bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 relative overflow-hidden">
-      <LoadingOverlay show={isGeneratingFinal} text="Generating your improved resume..." />
-      <SuccessIndicator show={showFinalResume} />
-      {/* Subtle background elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-500/10 to-indigo-600/10 dark:from-blue-500/5 dark:to-indigo-600/5 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-indigo-500/10 to-blue-600/10 dark:from-indigo-500/5 dark:to-blue-600/5 rounded-full blur-3xl"></div>
-      </div>
-
-      {/* Header */}
-      <header className="border-b border-slate-200/50 dark:border-slate-700/50 backdrop-blur-xl bg-white/90 dark:bg-slate-900/90 sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-sm">
-              <Brain className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-                ResumeWise
-              </h1>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-200"
-            aria-label="Toggle theme"
-          >
-            <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-            <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-          </Button>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-6 py-12 max-w-6xl relative z-10">
-        {/* Error Display */}
-        {error && (
-          <div className="mb-8 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-            <p className="text-red-700 dark:text-red-300 text-sm">{error}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setError(null)}
-              className="mt-2 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
-            >
-              Dismiss
-            </Button>
-          </div>
-        )}
-
-        {/* Hero Section */}
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-2 mb-6">
-            <Brain className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">AI-Powered Resume Analysis</span>
-          </div>
-          <h2 className="text-4xl font-semibold mb-6 text-slate-900 dark:text-white leading-tight">
-            Professional Resume Enhancement
+    <div className="space-y-6 animate-fade-in">
+      <div className="text-center mb-8">
+        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
+          AI Analysis Results
           </h2>
-          <p className="text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            Get intelligent, data-driven suggestions to optimize your resume for your target role.
+        <p className="text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
+          Review and refine your resume with our AI-powered suggestions. Each recommendation is tailored to your target role.
           </p>
         </div>
 
-        {!showResults ? (
-          /* Upload Section */
-          <div className="grid md:grid-cols-2 gap-8 mb-12">
-            {/* Resume Upload */}
-            <Card className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow duration-200">
+      <div className="grid gap-6">
+        {critiques.map((critique) => {
+          const diffLines = getDiffLines(critique.original, critique.suggested)
+          const isAccepted = critique.status === "accepted"
+          const isRejected = critique.status === "rejected"
+          const isEdited = critique.status === "edited"
+
+          return (
+            <Card key={critique.id} className={`card-modern transition-all duration-300 ${isAccepted ? 'ring-2 ring-emerald-500/20' : isRejected ? 'ring-2 ring-red-500/20' : ''}`}>
               <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-3 text-lg dark:text-white">
-                  <div className="p-2 rounded-lg bg-blue-600 text-white">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  Upload Resume
-                </CardTitle>
-                <CardDescription className="text-slate-600 dark:text-slate-400">
-                  Upload your resume in PDF, DOCX, DOC, or TXT format
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 text-center hover:border-blue-400 dark:hover:border-blue-500 transition-colors duration-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                  <input
-                    type="file"
-                    accept=".pdf,.txt,.doc,.docx"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    id="resume-upload"
-                  />
-                  <label htmlFor="resume-upload" className="cursor-pointer block">
-                    <div className="w-12 h-12 mx-auto mb-4 rounded-lg bg-blue-600 flex items-center justify-center text-white">
-                      <Upload className="w-6 h-6" />
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className={`p-2 rounded-lg ${getCategoryColor(critique.category)}`}>
+                      {getCategoryIcon(critique.category)}
                     </div>
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                      {resumeFile ? (
-                        <span className="text-green-600 dark:text-green-400 flex items-center justify-center gap-2">
-                          <CheckCircle className="w-4 h-4" />
-                          {resumeFile.name}
-                        </span>
+                    <div>
+                      <CardTitle className="text-lg font-semibold text-slate-900 dark:text-white">
+                        {critique.category} Improvement
+                      </CardTitle>
+                      <div className="flex items-center space-x-2 mt-1">
+                        <Badge className={`badge-modern ${getCategoryColor(critique.category)}`}>
+                          {critique.category}
+                        </Badge>
+                        <Badge className={`badge-modern ${getImpactColor(critique.impact)}`}>
+                          {critique.impact} Impact
+                        </Badge>
+                        {critique.needsClarification && (
+                          <Badge className="badge-modern bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            Needs Clarification
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {critique.status === "pending" && (
+                      <>
+                        <Button onClick={() => handleAccept(critique.id)} className="btn-primary flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
+                          <CheckCircle className="w-4 h-4" /> Accept
+                        </Button>
+                        <Button onClick={() => handleReject(critique.id)} className="btn-danger flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
+                          <XCircle className="w-4 h-4" /> Reject
+                        </Button>
+                        <Button onClick={() => handleEdit(critique.id)} className="btn-secondary flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
+                          <Edit3 className="w-4 h-4" /> Edit
+                        </Button>
+                      </>
+                    )}
+                    {(isAccepted || isRejected || isEdited) && (
+                      <Button onClick={() => handleUndo(critique.id)} className="btn-ghost flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
+                        <RefreshCw className="w-4 h-4" /> Undo
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="space-y-6">
+                {critique.needsClarification && critique.clarificationQuestion && (
+                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+                    <div className="flex items-start space-x-3">
+                      <MessageCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">
+                          Clarification Needed
+                        </h4>
+                        <p className="text-amber-800 dark:text-amber-200 mb-3">
+                          {critique.clarificationQuestion}
+                        </p>
+                        <Button 
+                          onClick={() => handleClarification(critique.sectionId!, critique.clarificationQuestion!, critique.original)}
+                          className="btn-primary text-sm"
+                        >
+                          Provide Details
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="font-semibold text-slate-900 mb-3 flex items-center">
+                      <FileText className="w-4 h-4 mr-2 text-slate-500" />
+                      Current Version
+                    </h4>
+                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                      {critique.original && critique.original.trim() ? (
+                        renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.original, critique.category || 'Section'))
                       ) : (
-                        "Click to upload or drag and drop"
+                        <div className="text-slate-400 italic">No original content available.</div>
                       )}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">PDF, DOCX, DOC, TXT up to 10MB</p>
-                  </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-slate-900 mb-3 flex items-center">
+                      <Sparkles className="w-4 h-4 mr-2 text-emerald-500" />
+                      Agent Suggestion
+                    </h4>
+                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+                      {critique.status === "edited" && critique.editedText
+                        ? renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.editedText, critique.category || 'Section'))
+                        : renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.suggested, critique.category || 'Section'))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
+                  <h4 className="font-semibold text-slate-900 dark:text-white mb-2 flex items-center">
+                    <Lightbulb className="w-4 h-4 mr-2 text-amber-500" />
+                    Why This Change?
+                  </h4>
+                  <p className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed">
+                    {critique.reason}
+                  </p>
                 </div>
               </CardContent>
             </Card>
+          )
+        })}
+      </div>
 
-            {/* Job Description */}
-            <Card className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow duration-200">
-              <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-3 text-lg dark:text-white">
-                  <div className="p-2 rounded-lg bg-indigo-600 text-white">
-                    <Briefcase className="w-5 h-5" />
+      {critiques.length > 0 && (
+        <div className="text-center pt-8">
+          <Button 
+            onClick={handleGenerateFinalResume}
+            disabled={isGeneratingFinal || critiques.every(c => c.status === "pending")}
+            className="btn-primary text-lg px-8 py-4"
+          >
+            {isGeneratingFinal ? (
+              <>
+                <div className="progress-ring mr-3" />
+                Generating Final Resume...
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5 mr-3" />
+                Generate Final Resume
+              </>
+            )}
+          </Button>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-3">
+            Accept or edit suggestions to enable final resume generation
+          </p>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderFinalResume = () => (
+    <div className="animate-fade-in">
+      {/* Top bar with New Analysis button and download icon */}
+      <div className="flex items-center justify-between mb-6">
+        <Button onClick={() => {
+          setShowFinalResume(false)
+          setShowResults(false)
+          setCritiques([])
+          setAnalysisData(null)
+          setResumeFile(null)
+          setJobDescription("")
+        }} className="btn-secondary">
+          <RefreshCw className="w-4 h-4 mr-2" /> New Analysis
+        </Button>
+        <button
+          className="btn-ghost relative group"
+          onClick={() => downloadTxt("ResumeWise-Resume.txt", finalResume)}
+          title="Download as TXT"
+          style={{ padding: 8, borderRadius: 8 }}
+        >
+          <Download className="w-6 h-6 text-slate-500 group-hover:text-blue-600 transition" />
+          <span className="tooltip group-hover:opacity-100 group-focus:opacity-100">Download as TXT</span>
+        </button>
+      </div>
+      <div className="text-center mb-8">
+        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
+          Your Improved Resume
+        </h2>
+        <p className="text-slate-600 dark:text-slate-400">
+          Here's your resume with all accepted improvements applied.
+        </p>
+      </div>
+      <div className="resume-card">
+        <div className="max-w-3xl mx-auto">
+          {renderFormattedSectionFromMarkdown(finalResume)}
+        </div>
+      </div>
+    </div>
+  )
+
+  // Utility function for downloading
+  function downloadTxt(filename: string, text: string) {
+    const element = document.createElement("a");
+    const file = new Blob([text], { type: "text/plain" });
+    element.href = URL.createObjectURL(file);
+    element.download = filename;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  }
+
+  // Loading overlay
+  const LoadingOverlay = ({ show, text }: { show: boolean; text?: string }) => show ? (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+      <div className="card-modern p-8 text-center">
+        <div className="progress-ring mx-auto mb-4" />
+        <p className="text-lg font-semibold text-slate-900 dark:text-white">
+          {text || "Processing..."}
+        </p>
+      </div>
+    </div>
+  ) : null
+
+  function ClarificationInputModal({ question, value, onChange, onCancel, onSubmit, isProcessing }: {
+    question: string;
+    value: string;
+    onChange: (val: string) => void;
+    onCancel: () => void;
+    onSubmit: () => void;
+    isProcessing: boolean;
+  }) {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    useEffect(() => {
+      if (textareaRef.current) textareaRef.current.focus();
+    }, []);
+    return (
+      <div className="p-6">
+        <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">
+          Provide Additional Details
+        </h3>
+        <p className="text-slate-600 dark:text-slate-400 mb-4">
+          {question}
+        </p>
+        <Textarea
+          ref={textareaRef}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Enter your response..."
+          className="input-modern mb-4 min-h-[120px]"
+        />
+        <div className="flex justify-end space-x-3">
+          <Button onClick={onCancel} className="btn-secondary">
+            Cancel
+          </Button>
+          <Button onClick={onSubmit} disabled={isProcessing || !value.trim()} className="btn-primary">
+            {isProcessing ? "Processing..." : "Submit"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (showFinalResume) {
+    return renderFinalResume()
+  }
+
+  if (showResults) {
+    return (
+      <div className="animate-fade-in">
+        {renderCritiques()}
+        
+        <Modal open={clarificationModal.isOpen} onClose={() => setClarificationModal({ isOpen: false, sectionId: "", question: "", originalText: "", userResponse: "" })}>
+          <ClarificationInputModal
+            question={clarificationModal.question}
+            value={clarificationModal.userResponse}
+            onChange={val => setClarificationModal(prev => ({ ...prev, userResponse: val }))}
+            onCancel={() => setClarificationModal({ isOpen: false, sectionId: "", question: "", originalText: "", userResponse: "" })}
+            onSubmit={handleSubmitClarification}
+            isProcessing={isProcessingClarification}
+          />
+        </Modal>
+
+        <Modal open={editModal.isOpen} onClose={() => setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })}>
+          <div className="p-6">
+            <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">
+              Edit Suggestion
+            </h3>
+            <Textarea
+              value={editModal.editedText}
+              onChange={(e) => setEditModal(prev => ({ ...prev, editedText: e.target.value }))}
+              placeholder="Edit the suggested text..."
+              className="input-modern mb-4 min-h-[200px]"
+            />
+            <div className="flex justify-end space-x-3">
+              <Button 
+                onClick={() => setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })}
+                className="btn-secondary"
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleSaveEdit}
+                className="btn-primary"
+              >
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      </div>
+    )
+  }
+
+  return (
+    <div className="animate-fade-in">
+      {/* Hero Section */}
+      <div className="text-center mb-12">
+        <div className="inline-flex items-center space-x-2 bg-emerald-100 text-emerald-800 px-4 py-2 rounded-full text-sm font-medium mb-6">
+          <span className="inline-block w-4 h-4 bg-[var(--accent)] rounded-full" />
+          <span>AI-Powered Resume Analysis</span>
+        </div>
+        <h1 className="hero-title">
+          Transform Your Resume with <span className="hero-highlight">AI Intelligence</span>
+        </h1>
+        <p className="text-xl text-slate-600 max-w-3xl mx-auto leading-relaxed">
+          Get professional, personalized feedback on your resume. Our AI analyzes your content against job requirements and provides actionable improvements.
+        </p>
+      </div>
+
+      {/* Features Grid */}
+      <div className="grid md:grid-cols-3 gap-6 mb-12">
+        <div className="card-modern text-center p-6">
+          <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mx-auto mb-4">
+            <span className="inline-block w-6 h-6 bg-blue-400 rounded-full" />
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">AI Analysis</h3>
+          <p className="text-slate-600 text-sm">Advanced AI reviews your resume against job requirements</p>
+        </div>
+
+        <div className="card-modern text-center p-6">
+          <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center mx-auto mb-4">
+            <span className="inline-block w-6 h-6 bg-emerald-400 rounded-full" />
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Targeted Feedback</h3>
+          <p className="text-slate-600 text-sm">Personalized suggestions based on your target role</p>
+        </div>
+
+        <div className="card-modern text-center p-6">
+          <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mx-auto mb-4">
+            <span className="inline-block w-6 h-6 bg-purple-400 rounded-full" />
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Instant Results</h3>
+          <p className="text-slate-600 text-sm">Get comprehensive feedback in seconds, not days</p>
+        </div>
                   </div>
-                  Job Description
+
+      {/* Upload Section */}
+      <Card className="card-modern max-w-4xl mx-auto">
+        <CardHeader className="text-center pb-6">
+          <CardTitle className="text-2xl font-bold text-slate-900 mb-2">
+            Upload Your Resume
                 </CardTitle>
-                <CardDescription className="text-slate-600 dark:text-slate-400">
-                  Paste the job description you're applying for
+          <CardDescription className="text-slate-600">
+            Upload your resume and provide the job description for targeted analysis
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+
+        <CardContent className="space-y-6">
+          {/* File Upload */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-3">
+              Resume File (PDF, DOCX, TXT)
+            </label>
+            <div className={`upload-area ${resumeFile ? 'border-emerald-500 bg-emerald-50' : ''}`}>
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt"
+                onChange={handleFileUpload}
+                className="hidden"
+                id="resume-upload"
+              />
+              <label htmlFor="resume-upload" className="cursor-pointer">
+                <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                <p className="text-lg font-medium text-slate-900 mb-2">
+                  {resumeFile ? resumeFile.name : "Choose a file or drag it here"}
+                </p>
+                <p className="text-sm text-slate-500">
+                  {resumeFile ? "File selected successfully" : "Supports PDF, DOCX, and TXT formats"}
+                </p>
+              </label>
+            </div>
+          </div>
+
+          {/* Job Description */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-3">
+              Job Description
+            </label>
                 <Textarea
-                  placeholder="Paste the job description here to get tailored suggestions..."
                   value={jobDescription}
                   onChange={(e) => setJobDescription(e.target.value)}
-                  className="min-h-[200px] resize-none bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 focus:border-blue-500 dark:focus:border-blue-400 transition-colors duration-200 rounded-lg dark:text-white dark:placeholder:text-slate-400"
+              placeholder="Paste the job description here to get targeted feedback..."
+              className="input-modern min-h-[120px] resize-none"
                 />
-              </CardContent>
-            </Card>
+            <p className="text-sm text-slate-500 mt-2">
+              The more detailed the job description, the better our analysis will be.
+            </p>
           </div>
-        ) : null}
 
-        {/* Submit Button */}
-        {!showResults && (
-          <div className="text-center mb-8">
+          {/* Error Display */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+              <p className="text-red-800 text-sm">{error}</p>
+            </div>
+          )}
+
+          {/* Analyze Button */}
+          <div className="text-center pt-4">
             <Button
               onClick={handleAnalyze}
               disabled={!resumeFile || !jobDescription.trim() || isAnalyzing}
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg shadow-sm hover:shadow-md transition-all duration-200 text-base font-medium"
+              className="btn-primary text-lg px-8 py-4"
             >
               {isAnalyzing ? (
                 <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3" />
+                  <div className="progress-ring mr-3" />
                   Analyzing Resume...
                 </>
               ) : (
                 <>
-                  <Brain className="w-5 h-5 mr-3" />
+                  <Zap className="w-5 h-5 mr-3" />
                   Analyze Resume
                 </>
               )}
             </Button>
-          </div>
-        )}
+            <p className="text-sm text-slate-500 mt-3">
+              Upload both files to start your analysis
+            </p>
+                    </div>
+                  </CardContent>
+                </Card>
 
-        {/* Results Section */}
-        {showResults && (
-          <div className="space-y-8">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-6 mb-6">
-              <div>
-                <h3 className="text-3xl font-semibold text-slate-900 dark:text-white mb-2 tracking-tight">Analysis Results</h3>
-                <p className="text-slate-600 dark:text-slate-400">Found {critiques.length} suggestions to improve your resume</p>
-                {analysisData && (analysisData as any).summary && (
-                  <div className="mt-2 flex gap-4 text-sm text-slate-500 dark:text-slate-400">
-                    <span>Overall Score: {((analysisData as any).summary.overall_score || 0).toFixed(1)}/10</span>
-                    <span>Strong Sections: {(analysisData as any).summary.strong_sections || 0}</span>
-                    <span>Needs Improvement: {(analysisData as any).summary.needs_improvement || 0}</span>
-                  </div>
-                )}
-                
-                {/* Progress Tracking */}
-                <div className="mt-4 space-y-2">
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-slate-300 dark:bg-slate-600"></div>
-                      Pending: {critiques.filter(c => c.status === "pending").length}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                      Accepted: {critiques.filter(c => c.status === "accepted").length}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                      Edited: {critiques.filter(c => c.status === "edited").length}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                      Rejected: {critiques.filter(c => c.status === "rejected").length}
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                    <div 
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ 
-                        width: `${((critiques.filter(c => c.status === "accepted" || c.status === "edited").length) / critiques.length) * 100}%` 
-                      }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleGenerateFinalResume}
-                  disabled={isGeneratingFinal || critiques.filter(c => c.status === "pending").length > 0}
-                  size="lg"
-                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 rounded-xl px-6 py-3 font-semibold"
-                >
-                  {isGeneratingFinal ? (
-                    <>
-                      <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5 mr-2" />
-                      Generate Final Resume
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowResults(false)
-                    setCritiques([])
-                    setResumeFile(null)
-                    setJobDescription("")
-                    setAnalysisData(null)
-                    setError(null)
-                  }}
-                  className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 dark:text-white transition-colors duration-200 rounded-xl px-6 py-3 font-semibold"
-                >
-                  Start New Analysis
-                </Button>
-              </div>
-            </div>
-
-            {renderCritiques()}
-
-            {critiques.length === 0 && (
-              <Card className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 shadow-sm">
-                <CardContent className="p-12 text-center">
-                  <div className="w-16 h-16 mx-auto mb-6 rounded-lg bg-green-600 flex items-center justify-center text-white">
-                    <CheckCircle className="w-8 h-8" />
-                  </div>
-                  <h3 className="text-2xl font-semibold mb-3 text-green-800 dark:text-green-300">Review Complete</h3>
-                  <p className="text-green-700 dark:text-green-400 text-lg">
-                    You've reviewed all suggestions. Your resume is ready for final generation.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* Clarification Modal */}
-      {clarificationModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg dark:text-white">
-                <MessageCircle className="w-5 h-5 text-orange-500" />
-                Provide Additional Details
-              </CardTitle>
-              <CardDescription className="text-slate-600 dark:text-slate-400">
-                Help us improve this bullet point with more specific information
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Original Bullet:</h4>
-                <p className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg">
-                  {clarificationModal.originalText}
-                </p>
-              </div>
-              
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Question:</h4>
-                <p className="text-sm text-slate-700 dark:text-slate-300 bg-orange-50 dark:bg-orange-900/20 p-3 rounded-lg border border-orange-200 dark:border-orange-800">
-                  {clarificationModal.question}
-                </p>
-              </div>
-              
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Your Response:</h4>
-                <Textarea
-                  value={clarificationModal.userResponse}
-                  onChange={(e) => setClarificationModal(prev => ({ ...prev, userResponse: e.target.value }))}
-                  placeholder="Provide specific details, metrics, or context..."
-                  className="min-h-[100px] resize-none bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 focus:border-orange-500 dark:focus:border-orange-400 transition-colors duration-200 rounded-lg dark:text-white dark:placeholder:text-slate-400"
-                />
-              </div>
-              
-              <div className="flex gap-3 justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => setClarificationModal(prev => ({ ...prev, isOpen: false }))}
-                  disabled={isProcessingClarification}
-                  className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 dark:text-white"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleSubmitClarification}
-                  disabled={!clarificationModal.userResponse.trim() || isProcessingClarification}
-                  className="bg-orange-600 hover:bg-orange-700 text-white shadow-sm hover:shadow-md transition-all duration-200"
-                >
-                  {isProcessingClarification ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <Brain className="w-4 h-4 mr-2" />
-                      Submit & Improve
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Edit Modal */}
-      {editModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg dark:text-white">
-                <Edit3 className="w-5 h-5 text-blue-500" />
-                Edit Bullet Point
-              </CardTitle>
-              <CardDescription className="text-slate-600 dark:text-slate-400">
-                Customize the suggested improvement to better match your experience
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Original:</h4>
-                <p className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg">
-                  {editModal.originalText}
-                </p>
-              </div>
-              
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">AI Suggestion:</h4>
-                <p className="text-sm text-slate-700 dark:text-slate-300 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-                  {editModal.suggestedText}
-                </p>
-              </div>
-              
-              <div>
-                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Your Edit:</h4>
-                <Textarea
-                  value={editModal.editedText}
-                  onChange={(e) => setEditModal(prev => ({ ...prev, editedText: e.target.value }))}
-                  placeholder="Edit the suggestion to better match your experience..."
-                  className="min-h-[120px] resize-none bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 focus:border-blue-500 dark:focus:border-blue-400 transition-colors duration-200 rounded-lg dark:text-white dark:placeholder:text-slate-400"
-                />
-              </div>
-              
-              <div className="flex gap-3 justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })}
-                  className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 dark:text-white"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleSaveEdit}
-                  disabled={!editModal.editedText.trim()}
-                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md transition-all duration-200"
-                >
-                  <CheckCircle className="w-4 h-4 mr-2" />
-                  Save Edit
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {renderFinalResume()}
-
-      {/* Sticky action bar for final resume preview/download */}
-      {showFinalResume && (
-        <div className="fixed bottom-0 left-0 w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 shadow-lg z-50 flex items-center justify-center py-4 gap-4">
-          <Tooltip text="Download your improved resume as a PDF (coming soon)">
-            <Button className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-6 py-3 font-semibold shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500" onClick={() => setShowFinalResume(false)} aria-label="Close resume preview">
-              Close Preview
-            </Button>
-          </Tooltip>
-          <Tooltip text="Download your improved resume as a PDF (coming soon)">
-            <Button className="bg-green-600 hover:bg-green-700 text-white rounded-xl px-6 py-3 font-semibold shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500" onClick={() => {/* TODO: implement download */}} aria-label="Download as PDF">
-              <Download className="w-5 h-5 mr-2" />
-              Download as PDF
-            </Button>
-          </Tooltip>
-        </div>
-      )}
-
-      {/* Footer */}
-      <footer className="border-t border-slate-200 dark:border-slate-700 mt-20 bg-white dark:bg-slate-900">
-        <div className="container mx-auto px-6 py-8 text-center">
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            ResumeWise • Professional Resume Enhancement
-          </p>
-        </div>
-      </footer>
+      {/* Loading Overlay */}
+      <LoadingOverlay show={isAnalyzing} text="Analyzing your resume..." />
     </div>
   )
 }

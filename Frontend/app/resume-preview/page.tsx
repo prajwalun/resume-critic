@@ -1,9 +1,9 @@
 "use client"
 import React from "react";
 import { useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
-import { Download } from "lucide-react";
+import { Download, ArrowLeft, FileText } from "lucide-react";
 import remarkGfm from "remark-gfm";
+import ReactMarkdown from 'react-markdown';
 
 // Utility to decode base64 to string
 function decodeBase64(str: string) {
@@ -55,69 +55,262 @@ export function cleanResumeMarkdown(md: string) {
   return md;
 }
 
+// Add a new utility to further clean and format resume markdown for display
+function formatResumeMarkdown(md: string) {
+  // Remove duplicate subheadings within a section
+  md = md.replace(/(Relevant Coursework:)([\s\S]*?)(?=Relevant Coursework:|$)/g, (block: string) => {
+    // Only keep the first 'Relevant Coursework:' per section
+    const lines = block.split('\n');
+    const seen = new Set();
+    return lines.filter((line: string) => {
+      if (/^Relevant Coursework:/i.test(line)) {
+        if (seen.has('rc')) return false;
+        seen.add('rc');
+      }
+      return true;
+    }).join('\n');
+  });
+  // Bulletize comma-separated lists
+  md = md.replace(/(Relevant Coursework:|Skills:|Technologies:|Tools:|Languages:|Achievements:|Responsibilities:)[ \t]*\n?([^-\n][^\n]*)/gi, (match: string, heading: string, items: string) => {
+    if (!items) return match;
+    const bullets = items.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
+    if (bullets.length > 1) {
+      return `${heading}\n` + bullets.map((b: string) => `- ${b}`).join('\n');
+    }
+    return match;
+  });
+  // Bulletize any line with multiple comma-separated items (not already a list)
+  md = md.replace(/^(?![-*] )([^\n]+,[^\n]+)$/gm, (line: string) => {
+    const items = line.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
+    if (items.length > 1) {
+      return items.map((b: string) => `- ${b}`).join('\n');
+    }
+    return line;
+  });
+  // Remove extra blank lines
+  md = md.replace(/\n{3,}/g, '\n\n');
+  return md;
+}
+
+function parseSection(section: string) {
+  const lines = section.trim().split(/\n+/);
+  const heading = lines[0]?.replace(/^#+\s*/, "").trim();
+  const content = lines.slice(1).join("\n").trim();
+  return { heading, content };
+}
+
+// Add a new formatter for section-aware resume rendering
+export function formatResumeSections(sections: string[]): JSX.Element[] {
+  return sections.map((section, i) => {
+    const { heading, content } = parseSection(section);
+    if (!heading) return null;
+    // Skills: comma-separated
+    if (/skills|technologies|tools|languages|certifications/i.test(heading)) {
+      const items = content.split(/[,•\-\n]+/).map(s => s.trim()).filter(Boolean);
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <div className="text-slate-700 text-base leading-relaxed font-normal">
+            {items.join(', ')}
+          </div>
+        </section>
+      );
+    }
+    // Projects: Title, tech/tools, bullets
+    if (/projects?/i.test(heading)) {
+      // Split by double newlines or project markers
+      const entries = content.split(/\n{2,}|(?=^[A-Z][^\n]+\|[^\n]+|\*\*.+\*\*)/gm).map(e => e.trim()).filter(Boolean);
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <div className="space-y-8">
+            {entries.map((entry, idx) => {
+              // Try to split title/tools/details
+              let [firstLine, ...rest] = entry.split('\n');
+              let title = firstLine, tech = '', details = rest.join('\n').trim();
+              // If firstLine contains |, treat as Title | Tech
+              if (/\|/.test(firstLine)) {
+                const parts = firstLine.split('|').map(s => s.trim());
+                title = parts[0];
+                tech = parts.slice(1).join(' | ');
+              }
+              // Bulletize details
+              let bullets = details.split(/\n|(?<!\d), /).map(s => s.trim()).filter(Boolean);
+              // Remove bullets that are just tech/tools
+              bullets = bullets.filter(b => b && b !== tech && b !== title);
+              return (
+                <div key={idx} className="mb-4">
+                  <div className="font-bold text-lg text-slate-900 mb-1">{title}</div>
+                  {tech && <div className="text-slate-500 text-sm mb-1 italic">{tech}</div>}
+                  {bullets.length > 0 && (
+                    <ul className="list-disc ml-6 space-y-1">
+                      {bullets.map((b, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{b}</li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    }
+    // Experience: Job Title | Company | Date, bullets
+    if (/experience/i.test(heading)) {
+      const entries = content.split(/\n{2,}|(?=^[A-Z][^\n]+\|[^\n]+|\*\*.+\*\*)/gm).map(e => e.trim()).filter(Boolean);
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <div className="space-y-8">
+            {entries.map((entry, idx) => {
+              let [firstLine, ...rest] = entry.split('\n');
+              let title = firstLine, meta = '', details = rest.join('\n').trim();
+              // Try to extract Job Title | Company | Date
+              if (/\|/.test(firstLine)) {
+                const parts = firstLine.split('|').map(s => s.trim());
+                title = parts.slice(0, -1).join(' | ');
+                meta = parts[parts.length - 1];
+              }
+              // Bulletize details
+              let bullets = details.split(/\n|(?<!\d), /).map(s => s.trim()).filter(Boolean);
+              bullets = bullets.filter(b => b && b !== meta && b !== title);
+              return (
+                <div key={idx} className="mb-4">
+                  <div className="font-bold text-lg text-slate-900 mb-1">{title}</div>
+                  {meta && <div className="text-slate-500 text-sm mb-1">{meta}</div>}
+                  {bullets.length > 0 && (
+                    <ul className="list-disc ml-6 space-y-1">
+                      {bullets.map((b, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{b}</li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    }
+    // Education: Degree | Institution | Date, optional GPA/honors
+    if (/education/i.test(heading)) {
+      const entries = content.split(/\n{2,}|(?=^[A-Z][^\n]+\|[^\n]+|\*\*.+\*\*)/gm).map(e => e.trim()).filter(Boolean);
+      return (
+        <section key={i} className="resume-section mb-10">
+          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+          <div className="space-y-8">
+            {entries.map((entry, idx) => {
+              let [firstLine, ...rest] = entry.split('\n');
+              let degree = firstLine, meta = '', details = rest.join('\n').trim();
+              // Try to extract Degree | Institution | Date
+              if (/\|/.test(firstLine)) {
+                const parts = firstLine.split('|').map(s => s.trim());
+                degree = parts.slice(0, -1).join(' | ');
+                meta = parts[parts.length - 1];
+              }
+              // GPA/honors
+              let extras = details.split(/\n|, /).map(s => s.trim()).filter(Boolean);
+              extras = extras.filter(e => e && e !== meta && e !== degree);
+              return (
+                <div key={idx} className="mb-4">
+                  <div className="font-bold text-lg text-slate-900 mb-1">{degree}</div>
+                  {meta && <div className="text-slate-500 text-sm mb-1">{meta}</div>}
+                  {extras.length > 0 && (
+                    <div className="text-slate-600 text-sm mt-1">{extras.join(' | ')}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    }
+    // Default: paragraph
+    return (
+      <section key={i} className="resume-section mb-10">
+        <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
+        <div className="text-slate-700 text-base leading-relaxed font-normal whitespace-pre-line">{content}</div>
+      </section>
+    );
+  }).filter(Boolean) as JSX.Element[];
+}
+
+// Utility to fetch the final resume from the backend
+async function fetchFinalResume(analysisId: string): Promise<string> {
+  // Try the new backend endpoint
+  const res = await fetch(`/api/final-resume/${encodeURIComponent(analysisId)}`);
+  if (!res.ok) throw new Error('Failed to fetch final resume');
+  const data = await res.json();
+  return data.final_resume || data.data?.final_resume || '';
+}
+
 export default function ResumePreview() {
   const router = useRouter();
-  // Parse resume data from query string
   const [resume, setResume] = React.useState("");
-  const [mounted, setMounted] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
   React.useEffect(() => {
-    setMounted(true);
+    // Get analysis_id from query param or sessionStorage
     const params = new URLSearchParams(window.location.search);
-    const data = params.get("data");
-    if (data) setResume(cleanResumeMarkdown(decodeBase64(data)));
+    let analysisId = params.get("analysis_id");
+    if (!analysisId) {
+      analysisId = window.sessionStorage.getItem("last_analysis_id") || '';
+    }
+    if (!analysisId) {
+      setError("No analysis ID found. Please run an analysis first.");
+      setLoading(false);
+      return;
+    }
+    fetchFinalResume(analysisId)
+      .then(resumeText => {
+        setResume(resumeText);
+        setLoading(false);
+      })
+      .catch(e => {
+        // Fallback: try sessionStorage if available
+        const fallback = window.sessionStorage.getItem("last_final_resume") || '';
+        if (fallback) {
+          setResume(fallback);
+        } else {
+          setError("Failed to load final resume.");
+        }
+        setLoading(false);
+      });
   }, []);
 
+  if (loading) {
+    return <div className="text-center py-20 text-lg">Loading resume preview...</div>;
+  }
+  if (error) {
+    return <div className="text-center py-20 text-red-600">{error}</div>;
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50 font-sans text-slate-900 flex flex-col items-center py-0 px-2">
-      {/* Top bar with heading and button */}
-      <div className="w-full max-w-3xl flex items-center justify-between px-4 py-6 sticky top-0 z-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md shadow-md rounded-b-xl border-b border-slate-200 mb-0">
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">Your Improved Resume</h1>
+    <div className="animate-fade-in">
+      {/* Top bar with New Analysis button and download icon */}
+      <div className="flex items-center justify-between mb-6">
+        <button className="btn-secondary" onClick={() => router.push("/")}> <ArrowLeft className="w-4 h-4 mr-2" /> New Analysis </button>
+        {/* Download icon button with tooltip */}
         <button
-          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-full shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 text-base"
-          onClick={() => router.push("/")}
+          className="btn-ghost relative group"
+          onClick={() => downloadTxt("ResumeWise-Resume.txt", resume)}
+          title="Download as TXT"
+          style={{ padding: 8, borderRadius: 8 }}
         >
-          Start New Analysis
+          <Download className="w-6 h-6 text-slate-500 group-hover:text-blue-600 transition" />
+          <span className="tooltip group-hover:opacity-100 group-focus:opacity-100">Download as TXT</span>
         </button>
       </div>
-      {/* Resume content with card background and extra spacing */}
-      <div className="w-full max-w-3xl bg-white dark:bg-slate-900 rounded-3xl shadow-xl p-6 md:p-12 text-base leading-relaxed relative mt-10 mb-16 border border-slate-100 dark:border-slate-800 transition-all">
-        {/* Download icon button with tooltip */}
-        <div className="absolute top-4 right-4 group">
-          <button
-            className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 hover:text-blue-800 transition focus:outline-none focus:ring-2 focus:ring-blue-400 shadow"
-            title="Download as TXT"
-            aria-label="Download as TXT"
-            onClick={() => downloadTxt("ResumeWise-Resume.txt", resume)}
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <span className="absolute right-0 mt-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-50">
-            Download as TXT
-          </span>
+      <div className="text-center mb-8">
+        <div className="inline-flex items-center space-x-2 bg-emerald-100 text-emerald-800 px-4 py-2 rounded-full text-sm font-medium mb-4">
+          <FileText className="w-4 h-4" />
+          <span>Resume Preview</span>
         </div>
-        {resume ? (
-          <div className="prose prose-slate max-w-none">
-            {mounted && (() => {
-              const ReactMarkdown = require('react-markdown').default;
-              return <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  h1: (props: React.PropsWithChildren<any>) => <h1 className="text-3xl font-extrabold mt-10 mb-8 border-b border-slate-200 pb-2 tracking-tight text-slate-900 dark:text-white" {...props} />,
-                  h2: (props: React.PropsWithChildren<any>) => <h2 className="text-2xl font-bold mt-10 mb-6 border-b border-slate-100 pb-1 text-blue-700 dark:text-blue-400" style={{marginTop: '2.5rem'}} {...props} />,
-                  h3: (props: React.PropsWithChildren<any>) => <h3 className="text-lg font-semibold mt-8 mb-3 text-blue-600 dark:text-blue-300 border-b border-slate-50 pb-1" style={{marginTop: '2rem'}} {...props} />,
-                  ul: (props: React.PropsWithChildren<any>) => <ul className="list-disc ml-8 mb-4 space-y-2" {...props} />,
-                  li: (props: React.PropsWithChildren<any>) => <li className="mb-1 pl-1 text-base leading-relaxed" {...props} />,
-                  strong: (props: React.PropsWithChildren<any>) => <strong className="font-bold text-slate-900 dark:text-white" {...props} />,
-                  em: (props: React.PropsWithChildren<any>) => <em className="italic text-slate-700 dark:text-slate-300" {...props} />,
-                  p: (props: React.PropsWithChildren<any>) => <p className="mb-3 text-base leading-relaxed" {...props} />,
-                  hr: () => <hr className="my-8 border-slate-200 dark:border-slate-700" />,
-                }}
-              >{resume}</ReactMarkdown>;
-            })()}
-          </div>
-        ) : (
-          <span className="text-slate-400">No resume data found.</span>
-        )}
+        <h1 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">Your Improved Resume</h1>
+        <p className="text-slate-600 max-w-2xl mx-auto">Here's your resume with all accepted improvements applied.</p>
+      </div>
+      <div className="resume-card relative">
+        <div className="max-w-3xl mx-auto prose max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{resume}</ReactMarkdown>
+        </div>
       </div>
     </div>
   );
