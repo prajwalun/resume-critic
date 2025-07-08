@@ -9,6 +9,7 @@ import uvicorn
 from dotenv import load_dotenv
 from uuid import uuid4
 import json
+import logging
 
 # Judgment Labs imports
 from judgeval.tracer import Tracer, wrap
@@ -59,7 +60,7 @@ def safe_observe(span_type="span"):
         if judgment and hasattr(judgment, 'observe'):
             # Map custom span types to valid Judgment Labs span types
             valid_span_type = "span" if span_type == "endpoint" else span_type
-            return judgment.observe(span_type=valid_span_type)(func)
+            return judgment.observe(span_type=valid_span_type)(func)  # type: ignore[operator]
         else:
             return func
     return decorator
@@ -98,15 +99,13 @@ class ResumeAnalysisResponse(BaseModel):
 class ClarificationRequest(BaseModel):
     analysis_id: str
     section_id: str
-    bullet_id: str
     user_response: str
-    clarification_type: str
     original_text: str
     question: str
 
 class FinalResumeRequest(BaseModel):
     analysis_id: str
-    accepted_changes: Dict[str, str]  # bullet_id -> "original" or "improved"
+    accepted_changes: Dict[str, str]  # section_id -> "original" or "improved"
 
 @safe_observe("span")
 @app.get("/")
@@ -132,7 +131,6 @@ async def analyze_resume(
     - Job-specific optimization
     """
     try:
-        # Validate file type
         allowed_extensions = ['pdf', 'docx', 'doc', 'txt']
         file_extension = file.filename.lower().split('.')[-1] if file.filename else 'txt'
         if file_extension not in allowed_extensions:
@@ -140,57 +138,56 @@ async def analyze_resume(
                 status_code=400,
                 detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
             )
-        
-        # Read and extract text from file
         await file.seek(0)
         file_content = await file.read()
         resume_text = extract_resume_text(file_content, file.filename or "resume.txt")
-        
         if not resume_text:
             raise HTTPException(
                 status_code=400,
                 detail="Could not extract text from the uploaded file"
             )
-        
-        # Clean the resume text
         cleaned_text = clean_resume_text(resume_text)
-        
-        # Run comprehensive analysis
         analysis_results = await resume_agent.analyze_resume(
             resume_text=cleaned_text,
             job_description=job_description,
             review_mode=review_mode
         )
-        
         if not analysis_results.get("success", False):
             raise HTTPException(
                 status_code=500,
                 detail=f"Analysis failed: {analysis_results.get('error', 'Unknown error')}"
             )
-        
+        analysis_data = analysis_results.get("data", {})
+        # Defensive: ensure all keys exist
+        analysis_id = analysis_data.get("analysis_id") or str(uuid4())
+        sections = analysis_data.get("sections", [])
+        critiques = analysis_data.get("critiques", [])
+        summary = analysis_data.get("summary", {})
         # Store results for later use
-        analysis_id = analysis_results.get("analysis_id") or str(uuid4())
         analysis_results_store[analysis_id] = {
-            "results": analysis_results,
+            "results": {
+                "analysis_id": analysis_id,
+                "sections": sections,
+                "critiques": critiques,
+                "summary": summary,
+                "job_description": job_description,
+                "review_mode": review_mode
+            },
             "job_description": job_description,
             "resume_text": cleaned_text,
             "review_mode": review_mode
         }
-        
-        # Add evaluation for the analysis
-        if judgment:
-            judgment.async_evaluate(
-                scorers=[AnswerRelevancyScorer(threshold=0.7)],
-                input=f"Resume: {cleaned_text[:500]}... Job: {job_description[:500]}...",
-                actual_output=str(analysis_results.get("summary", {})),
-                model="gpt-4o"
-            )
-        
         return ResumeAnalysisResponse(
             success=True,
-            data=analysis_results
+            data={
+                "analysis_id": analysis_id,
+                "sections": sections,
+                "critiques": critiques,
+                "summary": summary,
+                "job_description": job_description,
+                "review_mode": review_mode
+            }
         )
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -209,45 +206,33 @@ async def process_clarification(request: ClarificationRequest):
     provide additional context for vague or missing metrics.
     """
     try:
-        # Get the original analysis
         analysis_data = analysis_results_store.get(request.analysis_id)
         if not analysis_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
-
-        # Process the clarification using the new section-level method
-        improved_section = resume_agent.process_clarification(
+        clarification_result = resume_agent.process_clarification(
             section_id=request.section_id,
             user_input=request.user_response,
             job_description=analysis_data["job_description"]
         )
-
-        # Update the stored analysis with the improved section
-        if "results" in analysis_data:
-            for section in analysis_data["results"].get("sections", []):
-                if section.get("id") == request.section_id:
-                    section["improved_text"] = improved_section
-                    section["clarified"] = True
-                    section["user_clarification"] = request.user_response
-                    break
-
-        # Add evaluation for the clarification process
-        if judgment:
-            judgment.async_evaluate(
-                scorers=[FaithfulnessScorer(threshold=0.8)],
-                input=f"Clarification for section {request.section_id}: {request.user_response}",
-                actual_output=improved_section,
-                model="gpt-4o"
+        if not clarification_result.get("success", False):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Clarification failed: {clarification_result.get('error', 'Unknown error')}"
             )
-
         return ResumeAnalysisResponse(
             success=True,
             data={
-                "improved_section": improved_section,
+                "improved_section": {
+                    "improved_text": clarification_result.get("improved_section", ""),
+                    "original_text": request.original_text,
+                    "user_clarification": request.user_response,
+                    "improvement_explanation": clarification_result.get("reason", ""),
+                    "section_id": request.section_id
+                },
                 "analysis_id": request.analysis_id,
                 "message": "Clarification processed successfully"
             }
         )
-
     except Exception as e:
         print(f"Error processing clarification: {e}")
         raise HTTPException(
@@ -263,27 +248,20 @@ async def generate_final_resume(request: FinalResumeRequest):
     Users can choose which improvements to accept for each section.
     """
     try:
-        # Get the original analysis
         analysis_data = analysis_results_store.get(request.analysis_id)
         if not analysis_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
-
-        # Update accepted improvements in the agent
+        # Log incoming accepted_changes for debugging
+        logging.info(f"Received accepted_changes: {request.accepted_changes}")
+        valid_section_ids = {section["id"] for section in analysis_data["results"].get("sections", []) if "id" in section}
+        logging.info(f"Valid section IDs: {valid_section_ids}")
+        for section_id in request.accepted_changes:
+            if section_id not in valid_section_ids:
+                logging.error(f"Invalid section_id received: {section_id}")
+                raise HTTPException(status_code=422, detail=f"Invalid section_id: {section_id}")
         for section_id, choice in request.accepted_changes.items():
             resume_agent.accept_improvement(section_id, choice == "improved")
-
-        # Generate final resume using the agent's internal state
         final_resume_text = resume_agent.generate_final_resume()
-
-        # Add evaluation for the final resume
-        if judgment:
-            judgment.async_evaluate(
-                scorers=[AnswerRelevancyScorer(threshold=0.8)],
-                input=f"Job: {analysis_data['job_description'][:500]}... | Accepted changes: {len(request.accepted_changes)}",
-                actual_output=final_resume_text[:1000],
-                model="gpt-4o"
-            )
-
         return ResumeAnalysisResponse(
             success=True,
             data={
@@ -292,9 +270,12 @@ async def generate_final_resume(request: FinalResumeRequest):
                 "message": "Final resume generated successfully"
             }
         )
-
+    except HTTPException as e:
+        # Always include a detail field in error responses
+        logging.error(f"HTTPException in generate_final_resume: {e.detail}")
+        raise
     except Exception as e:
-        print(f"Error generating final resume: {e}")
+        logging.error(f"Error generating final resume: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generating final resume: {str(e)}"

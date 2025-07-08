@@ -137,7 +137,7 @@ def clean_resume_text(text: str) -> str:
     
     return text.strip()
 
-def extract_contact_info(text: str) -> dict:
+def extract_contact_info(text: str) -> dict[str, str | None]:
     """
     Extract contact information from resume text.
     
@@ -147,7 +147,7 @@ def extract_contact_info(text: str) -> dict:
     Returns:
         Dictionary with contact information
     """
-    contact_info = {
+    contact_info: dict[str, str | None] = {
         'email': None,
         'phone': None,
         'location': None

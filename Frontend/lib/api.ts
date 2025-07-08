@@ -1,6 +1,6 @@
 // API service for Resume Critic AI backend integration
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export interface ResumeAnalysisRequest {
   job_description: string;
@@ -10,16 +10,14 @@ export interface ResumeAnalysisRequest {
 export interface ClarificationRequest {
   analysis_id: string;
   section_id: string;
-  bullet_id: string;
   user_response: string;
-  clarification_type: string;
   original_text: string;
   question: string;
 }
 
 export interface FinalResumeRequest {
   analysis_id: string;
-  accepted_changes: Record<string, string>; // bullet_id -> "original" or "improved"
+  accepted_changes: Record<string, string>; // section_id -> "original" or "improved"
 }
 
 export interface BulletEvaluation {
@@ -62,32 +60,35 @@ export interface ResumeSection {
 }
 
 export interface AnalysisSummary {
-  total_bullets: number;
-  strong_bullets: number;
-  needs_improvement: number;
-  needs_clarification: number;
+  total_sections: number;
+  sections_analyzed: number;
+  sections_needing_clarification: number;
   overall_score: number;
-  job_keywords_matched: number;
+  job_keywords: string[];
+  strong_sections: number;
+  needs_improvement: number;
 }
 
 export interface ResumeAnalysisResponse {
   success: boolean;
-  analysis_id: string;
-  sections: ResumeSection[];
-  summary: AnalysisSummary;
-  job_keywords: string[];
-  review_mode: boolean;
-  timestamp: string;
+  data: {
+    analysis_id: string;
+    sections: any[];
+    critiques: any[];
+    summary: AnalysisSummary;
+    job_description: string;
+    review_mode: boolean;
+  };
 }
 
 export interface ClarificationResponse {
   success: boolean;
-  improved_bullet: {
+  improved_section: {
     improved_text: string;
     original_text: string;
     user_clarification: string;
     improvement_explanation: string;
-    new_evaluation: BulletEvaluation;
+    section_id: string;
   };
   analysis_id: string;
   message: string;
