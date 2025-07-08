@@ -31,6 +31,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { useTheme } from "next-themes"
 import { resumeCriticAPI, type ResumeAnalysisResponse, type ResumeBullet, type ClarificationRequest } from "@/lib/api"
+import { useRouter } from 'next/navigation'
+import { cleanResumeMarkdown } from "./resume-preview/page";
+import remarkGfm from "remark-gfm";
 
 interface CritiqueItem {
   id: string
@@ -86,6 +89,7 @@ export default function ResumeCriticAI() {
   const [showFinalResume, setShowFinalResume] = useState(false)
   const [finalResume, setFinalResume] = useState("")
   const [isPdfLoading, setIsPdfLoading] = useState(false)
+  const router = useRouter()
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -266,8 +270,10 @@ export default function ResumeCriticAI() {
         accepted_changes: acceptedChanges
       });
       if (response.success) {
-        // Only setShowResults here; final resume preview is handled in handleGenerateFinalResume
-        setShowFinalResume(true);
+        // Navigate to /resume-preview with base64-encoded resume
+        const finalResumeText = (response as any).final_resume || (response as any).data?.final_resume || "";
+        const encoded = btoa(unescape(encodeURIComponent(finalResumeText)));
+        router.push(`/resume-preview?data=${encoded}`);
       }
     } catch (error) {
       setError("Failed to generate final resume. Please try again.");
@@ -404,6 +410,7 @@ export default function ResumeCriticAI() {
       {critiques.map((critique, idx) => {
         const isEdited = critique.status === "edited";
         const isAccepted = critique.status === "accepted";
+        const ReactMarkdown = require('react-markdown').default;
         return (
           <div key={critique.id} className="bg-white dark:bg-slate-900 rounded-2xl shadow border border-slate-200 dark:border-slate-700 p-6 flex flex-col gap-4">
             <div className="flex items-center gap-3 mb-2">
@@ -418,15 +425,43 @@ export default function ResumeCriticAI() {
               {/* Original */}
               <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
                 <h4 className="font-semibold mb-2 text-slate-700 dark:text-slate-300 text-base flex items-center gap-2"><XCircle className="w-4 h-4 text-red-400" />Original</h4>
-                <div className="text-sm leading-relaxed whitespace-pre-line">
-                  {critique.original}
+                <div className="text-sm leading-relaxed whitespace-pre-line prose prose-slate max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      h1: (props: React.PropsWithChildren<any>) => <h1 className="text-2xl font-bold mt-8 mb-4 border-b border-slate-200 pb-2" {...props} />,
+                      h2: (props: React.PropsWithChildren<any>) => <h2 className="text-xl font-bold mt-6 mb-3 text-blue-700" {...props} />,
+                      h3: (props: React.PropsWithChildren<any>) => <h3 className="text-lg font-semibold mt-4 mb-2 text-blue-600" {...props} />,
+                      ul: (props: React.PropsWithChildren<any>) => <ul className="list-disc ml-6 mb-2" {...props} />,
+                      li: (props: React.PropsWithChildren<any>) => <li className="mb-1" {...props} />,
+                      strong: (props: React.PropsWithChildren<any>) => <strong className="font-bold text-slate-900" {...props} />,
+                      em: (props: React.PropsWithChildren<any>) => <em className="italic text-slate-700" {...props} />,
+                      p: (props: React.PropsWithChildren<any>) => <p className="mb-2" {...props} />,
+                    }}
+                  >
+                    {cleanResumeMarkdown(critique.original)}
+                  </ReactMarkdown>
                 </div>
               </div>
               {/* Suggested */}
               <div className="bg-green-50 dark:bg-green-900/10 rounded-xl p-4 border border-green-100 dark:border-green-800">
                 <h4 className="font-semibold mb-2 text-slate-700 dark:text-slate-300 text-base flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500" />Suggested</h4>
-                <div className="text-sm leading-relaxed whitespace-pre-line font-medium">
-                  {critique.status === "edited" ? critique.editedText || critique.suggested : critique.suggested}
+                <div className="text-sm leading-relaxed whitespace-pre-line font-medium prose prose-slate max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      h1: (props: React.PropsWithChildren<any>) => <h1 className="text-2xl font-bold mt-8 mb-4 border-b border-slate-200 pb-2" {...props} />,
+                      h2: (props: React.PropsWithChildren<any>) => <h2 className="text-xl font-bold mt-6 mb-3 text-blue-700" {...props} />,
+                      h3: (props: React.PropsWithChildren<any>) => <h3 className="text-lg font-semibold mt-4 mb-2 text-blue-600" {...props} />,
+                      ul: (props: React.PropsWithChildren<any>) => <ul className="list-disc ml-6 mb-2" {...props} />,
+                      li: (props: React.PropsWithChildren<any>) => <li className="mb-1" {...props} />,
+                      strong: (props: React.PropsWithChildren<any>) => <strong className="font-bold text-slate-900" {...props} />,
+                      em: (props: React.PropsWithChildren<any>) => <em className="italic text-slate-700" {...props} />,
+                      p: (props: React.PropsWithChildren<any>) => <p className="mb-2" {...props} />,
+                    }}
+                  >
+                    {cleanResumeMarkdown(critique.status === "edited" ? critique.editedText || critique.suggested : critique.suggested)}
+                  </ReactMarkdown>
                 </div>
                 {critique.needsClarification && (
                   <Button

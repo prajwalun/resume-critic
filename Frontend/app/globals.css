@@ -68,6 +68,36 @@
   }
 }
 
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom component styles */
+.resume-card {
+  @apply bg-white dark:bg-gray-800 shadow-lg rounded-2xl p-8 mx-auto my-8 max-w-4xl;
+  box-shadow: 0 4px 24px 0 rgba(16,185,129,0.08);
+  transition: all 0.3s ease;
+}
+
+/* Accent button styles */
+.button-accent {
+  @apply bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-semibold px-8 py-3;
+  box-shadow: 0 2px 8px 0 rgba(16,185,129,0.12);
+  transition: all 0.2s ease;
+}
+
+.button-accent:hover {
+  box-shadow: 0 4px 16px 0 rgba(16,185,129,0.18);
+}
+
+/* Glassy sticky top bar */
+.sticky-topbar {
+  @apply sticky top-0 z-50 bg-white/85 dark:bg-gray-900/85 backdrop-blur-md border-b border-gray-200 dark:border-gray-700;
+  transition: all 0.3s ease;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
