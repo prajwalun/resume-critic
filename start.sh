@@ -1,71 +1,184 @@
 #!/bin/bash
 
-# Resume Critic AI - Full Stack Startup Script
-# This script starts both the backend and frontend servers
+# ResumeWise - AI-Powered Agentic Resume Analyzer
+# Start script for dual-system architecture
 
-echo "🚀 Starting Resume Critic AI..."
+set -e
+
+echo "🚀 Starting ResumeWise - AI-Powered Agentic Resume Analyzer"
+echo "======================================================"
+
+# Check if we're in the right directory
+if [ ! -f "README.md" ] || [ ! -d "backend" ] || [ ! -d "frontend" ]; then
+    echo "❌ Error: Please run this script from the project root directory"
+    exit 1
+fi
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
 
 # Function to check if a port is in use
 check_port() {
-    if lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null ; then
-        echo "⚠️  Port $1 is already in use. Please stop the process using port $1 and try again."
-        exit 1
+    if lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "⚠️  Port $1 is already in use"
+        return 1
     fi
+    return 0
 }
 
-# Check if required ports are available
-echo "🔍 Checking port availability..."
-check_port 8001  # Backend
-check_port 3000  # Frontend
+echo ""
+echo "🔍 Checking Prerequisites..."
 
-# Function to cleanup background processes on exit
-cleanup() {
-    echo "🛑 Shutting down servers..."
-    pkill -f "uvicorn main:app" 2>/dev/null
-    pkill -f "next dev" 2>/dev/null
-    exit 0
-}
-
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM
-
-# Start backend server
-echo "🔧 Starting backend server on port 8001..."
-cd backend
-uvicorn main:app --host 127.0.0.1 --port 8001 &
-BACKEND_PID=$!
-cd ..
-
-# Wait a moment for backend to start
-sleep 3
-
-# Check if backend started successfully
-if ! curl -s http://localhost:8001/api/health > /dev/null; then
-    echo "❌ Backend failed to start. Check the logs above for errors."
-    cleanup
+# Check Python
+if ! command_exists python3; then
+    echo "❌ Python 3 is required but not installed"
+    exit 1
 fi
 
-echo "✅ Backend server started successfully!"
+# Check Node.js
+if ! command_exists node; then
+    echo "❌ Node.js is required but not installed"
+    exit 1
+fi
 
-# Start frontend server
-echo "🎨 Starting frontend server on port 3000..."
-cd frontend
-npm run dev &
-FRONTEND_PID=$!
-cd ..
+# Check npm
+if ! command_exists npm; then
+    echo "❌ npm is required but not installed"
+    exit 1
+fi
 
-# Wait a moment for frontend to start
+echo "✅ Prerequisites check passed"
+
+# Check ports
+echo ""
+echo "🔍 Checking port availability..."
+if ! check_port 8000; then
+    echo "❌ Backend port 8000 is already in use. Please stop the existing process or use a different port."
+    exit 1
+fi
+
+if ! check_port 3000; then
+    echo "❌ Frontend port 3000 is already in use. Please stop the existing process or use a different port."
+    exit 1
+fi
+
+echo "✅ Ports 3000 and 8000 are available"
+
+# Setup Backend
+echo ""
+echo "🐍 Setting up Backend (Python/FastAPI)..."
+cd backend
+
+# Create virtual environment if it doesn't exist
+if [ ! -d ".venv" ]; then
+    echo "📦 Creating Python virtual environment..."
+    python3 -m venv .venv
+fi
+
+echo "🔧 Activating virtual environment..."
+source .venv/bin/activate
+
+echo "📥 Installing Python dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Check environment variables
+echo "🔑 Checking environment variables..."
+if [ ! -f ".env" ]; then
+    echo "⚠️  .env file not found. Creating template..."
+    cat > .env << EOF
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Judgment Labs Configuration  
+JUDGMENT_API_KEY=your_judgment_api_key_here
+JUDGMENT_ORG_ID=your_judgment_org_id_here
+
+# Optional: Monitoring Configuration
+JUDGMENT_MONITORING=true
+JUDGMENT_EVALUATIONS=true
+EOF
+    echo "📝 Please edit backend/.env with your API keys before running the server"
+    echo "   - Get OpenAI API key from: https://platform.openai.com/api-keys"
+    echo "   - Get Judgment API key from: https://platform.judgment.ai"
+fi
+
+# Start backend in background
+echo "🚀 Starting Backend Server (Port 8000)..."
+echo "   📊 Dual-System Architecture:"
+echo "   ⚡ Primary Scoring: Fast agent decisions (< 1 second)" 
+echo "   🔬 Judgment Framework: Comprehensive evaluation (2-5 seconds)"
+echo ""
+
+python -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0 &
+BACKEND_PID=$!
+
+# Wait for backend to start
+echo "⏳ Waiting for backend to initialize..."
 sleep 5
 
-echo ""
-echo "🎉 Resume Critic AI is now running!"
-echo ""
-echo "📱 Frontend: http://localhost:3000"
-echo "🔧 Backend API: http://localhost:8001"
-echo "📊 Health Check: http://localhost:8001/api/health"
-echo ""
-echo "Press Ctrl+C to stop all servers"
-echo ""
+# Test backend health
+if curl -s http://localhost:8000/health > /dev/null; then
+    echo "✅ Backend is running successfully"
+    echo "   📋 API Documentation: http://localhost:8000/docs"
+    echo "   🔗 Health Check: http://localhost:8000/health"
+else
+    echo "❌ Backend failed to start properly"
+    kill $BACKEND_PID 2>/dev/null
+    exit 1
+fi
 
-# Wait for user to stop the servers
+# Setup Frontend
+echo ""
+echo "⚛️  Setting up Frontend (Next.js)..."
+cd ../frontend
+
+echo "📥 Installing Node.js dependencies..."
+npm install
+
+# Start frontend in background  
+echo "🚀 Starting Frontend Server (Port 3000)..."
+npm run dev &
+FRONTEND_PID=$!
+
+# Wait for frontend to start
+echo "⏳ Waiting for frontend to initialize..."
+sleep 8
+
+# Test frontend
+if curl -s http://localhost:3000 > /dev/null; then
+    echo "✅ Frontend is running successfully"
+else
+    echo "❌ Frontend failed to start properly"
+    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
+    exit 1
+fi
+
+# Success message
+echo ""
+echo "🎉 ResumeWise is now running!"
+echo "======================================================"
+echo ""
+echo "📱 Frontend Application: http://localhost:3000"
+echo "🔧 Backend API: http://localhost:8000"
+echo "📖 API Documentation: http://localhost:8000/docs"
+echo "📊 Judgment Dashboard: https://platform.judgment.ai"
+echo ""
+echo "🔍 Monitor your agent traces at: https://platform.judgment.ai/traces"
+echo "📈 View evaluations at: https://platform.judgment.ai/evaluations"
+echo ""
+echo "💡 Features Active:"
+echo "   ⚡ Fast primary scoring for real-time decisions"
+echo "   🔬 Comprehensive Judgment evaluation in parallel"
+echo "   📊 Complete observability and tracing"
+echo "   🚨 Pattern detection and monitoring"
+echo ""
+echo "Press Ctrl+C to stop both servers"
+
+# Wait for user to stop
+trap 'echo ""; echo "🛑 Stopping servers..."; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; echo "✅ Servers stopped successfully"; exit 0' INT
+
+# Keep the script running
 wait 
