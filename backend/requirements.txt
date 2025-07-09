@@ -1,12 +1,15 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
-langchain
-langchain-openai==0.1.1
-langchain-core
-openai<2.0.0,>=1.10.0
-judgeval==0.0.50
+fastapi==0.109.2
+uvicorn==0.27.1
+pdfplumber==0.10.3
+python-multipart==0.0.9
 python-dotenv==1.0.1
-pydantic==2.5.0
-pypdf2==3.0.1
-python-docx==1.1.0
+
+# Judgment framework and compatible dependencies
+judgeval>=0.1.0
+openai>=1.90.0
+httpx>=0.28.0
+
+# Compatible LangChain versions
+langchain-core>=0.2.0
+langchain-openai>=0.1.25
+langsmith>=0.1.100

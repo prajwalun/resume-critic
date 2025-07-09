@@ -1,0 +1,274 @@
+﻿Evaluation
+Introduction
+How to use and build evaluation metrics in your testing pipelines
+We assume you are familiar with the data primitives used in judgeval as well as the agent modules you may be evaluating. If you are not familiar with these concepts, we recommend you understand them before continuing.
+Quickstart
+evals.py
+from judgeval import JudgmentClientfrom judgeval.data import Examplefrom judgeval.scorers import FaithfulnessScorerclient = JudgmentClient()agent = ...  # your agenttask = "What if these shoes don't fit?"example = Example(    input=task,    actual_output=agent.run(task),  # e.g. "We offer a 30-day full refund at no extra cost."    retrieval_context=["All customers are eligible for a 30 day full refund at no extra cost."],)scorer = FaithfulnessScorer(threshold=0.5)results = client.run_evaluation(    examples=[example],    scorers=[scorer],    model="gpt-4.1",)print(results)
+Evals in judgeval consist of three components:
+Example objects contain the fields involved in the eval. You can group Example objects into Dataset objects for scaled testing/evals.
+Scorer objects encode the methodology for scoring the Example objects based on an evaluation criteria.
+When using LLM-as-a-judge evals, Judge objects can be used to load specific LLMs to use as the judge model.
+Example
+An Example is a basic unit of data in judgeval that allows you to run evaluation scorers on your agents.
+In general, an Example corresponds to a single span in an agent trace.
+In the context of unit testing, an Example corresponds to a single test case.
+An Example can be composed of a mixture of the following fields:
+Field
+	Type
+	Description
+	input
+	Optional[Union[str, Dict[str, Any]]]
+	Sample input to your agent/task
+	actual_output
+	Optional[Union[str, List[str]]]
+	What your agent outputs based on the input
+	expected_output
+	Optional[Union[str, List[str]]]
+	The ideal output of your agent
+	retrieval_context
+	Optional[List[str]]
+	Context retrieved from a vector database
+	context
+	Optional[List[str]]
+	Ground truth information supplied to the agent
+	tools_called
+	Optional[List[str]]
+	Tools that your agent actually invoked
+	expected_tools
+	Optional[List[str]]
+	Tools you expect your agent to use
+	additional_metadata
+	Optional[Dict[str, Any]]
+	Extra information attached to the example
+	Here's a sample of creating an Example:
+StandardCustom
+example.py
+from judgeval.data import Exampleexample = Example(    input="Who founded Microsoft?",    actual_output="Bill Gates and Paul Allen.",    expected_output="Bill Gates and Paul Allen founded Microsoft in New Mexico in 1975.",    retrieval_context=["Bill Gates co-founded Microsoft with Paul Allen in 1975."],    context=["Bill Gates and Paul Allen are the founders of Microsoft."],    tools_called=["research_person", "research_company"],    expected_tools=["research_person", "research_company"],    additional_metadata={"research_source": "Wikipedia"})
+It is often most useful to create an Example from the direct outputs of your agent system:
+from judgeval.data import Exampleinput_q = "Who founded Microsoft?"example = Example(    input=input_q,    actual_output=agent.research(input_q),)
+This enables you to use the Example as a test case for your agent system in your CI pipeline.
+Example Fields
+Input
+Optional[Union[str, Dict[str, Any]]]
+The input field represents a sample input to your agent/task.
+example.py
+from judgeval.data import Exampleexample = Example(input="Is sparkling water healthy?")
+You can also pass a dictionary if your agent takes multiple args or a JSON object:
+example.py
+from judgeval.data import Exampleexample = Example(    input={        "question": "Is sparkling water healthy?",        "tool_preferences": ["research_person", "research_company"],  # suggested tools to agent        "user_id": "1234567890"  # use for personalization    })
+Actual Output
+Optional[Union[str, List[str]]]
+The actual_output field represents what your agent outputs based on the input. This is the actual output of your agent system created either at evaluation time or with saved answers.
+example.py
+from judgeval.data import Exampleexample = Example(    input="Is sparkling water healthy?",    actual_output="Sparkling water is neither healthy nor unhealthy.")
+Expected Output
+Optional[Union[str, List[str]]]
+The expected_output field represents the ideal output of your agent.
+example.py
+from judgeval.data import Exampleexample = Example(    input="Is sparkling water healthy?",    actual_output="Sparkling water is neither healthy nor unhealthy.",    expected_output="Sparkling water is neither healthy nor unhealthy.")
+Retrieval Context
+Optional[List[str]]
+The retrieval_context field represents the context that is actually retrieved from a vector database.
+example.py
+from judgeval.data import Exampleexample = Example(    input="Is sparkling water healthy?",    actual_output="Sparkling water is neither healthy nor unhealthy.",    expected_output="Sparkling water is neither healthy nor unhealthy.",    retrieval_context=["Sparkling water is carbonated and has no calories."])
+Context
+Optional[List[str]]
+The context field represents information that is supplied to the agent system as ground truth.
+For instance, context could be a list of facts that the agent is aware of. However, context should not be confused with retrieval_context.
+In RAG systems, contextual information is retrieved from a vector database and is represented in judgeval by retrieval_context, not context.
+If you're building a RAG system, you'll want to use retrieval_context.
+example.py
+# Sample app implementationimport medical_chatbotfrom judgeval.data import Examplequestion = "Is sparkling water healthy?"example = Example(    input=question,    actual_output=medical_chatbot.chat(question),    expected_output="Sparkling water is neither healthy nor unhealthy.",    retrieval_context=["Sparkling water is carbonated and has no calories."],    context=["Sparkling water is a type of water that is carbonated."])
+Tools Called
+Optional[List[str]]
+The tools_called field represents the list of tools that your agent actually invoked during the process of generating the output. This is useful for evaluating tool-using agents or agents that interact with external APIs.
+example.py
+from judgeval.data import Exampleexample = Example(    input="What is the weather in Paris?",    actual_output="The weather in Paris is sunny and 25°C.",    tools_called=["weather_api"])
+Expected Tools
+Optional[List[str]]
+The expected_tools field represents the list of tools that you expect your agent to use to answer the input. This can be used to compare with tools_called to evaluate whether the agent used the correct tools.
+example.py
+from judgeval.data import Exampleexample = Example(    input="What is the weather in Paris?",    actual_output="The weather in Paris is sunny and 25°C.",    tools_called=["weather_api"],    expected_tools=["weather_api"])
+Additional Metadata
+Optional[Dict[str, Any]]
+The additional_metadata field allows you to attach any extra information to the example. This can be useful for storing custom tags, sources, or any other data relevant to your evaluation or analysis.
+example.py
+from judgeval.data import Exampleexample = Example(    input="What is the weather in Paris?",    actual_output="The weather in Paris is sunny and 25°C.",    tools_called=["weather_api"],    expected_tools=["weather_api"],    additional_metadata={"source": "OpenWeatherMap", "confidence": 0.95})
+Dataset
+If you haven't read about examples, you should reference the docs page before continuing.
+Learn about Examples
+The data primitives of evals in judgeval
+In most scenarios, you will have multiple examples that you want to evaluate together. The EvalDataset class is used to manage collections of examples. Datasets in judgeval allow you to scale evaluations and save, load, and synchronize datasets with the Judgment platform.
+Creating a Dataset
+Datasets can be created by passing a list of examples to the EvalDataset constructor.
+dataset.py
+from judgeval.data import Examplefrom judgeval.data.datasets import EvalDatasetexamples = [    Example(input="...", actual_output="..."),    Example(input="...", actual_output="..."),    ...]dataset = EvalDataset(    examples=examples)
+You can also add Examples to an existing EvalDataset.
+dataset.add_example(Example(input="Question 3?", actual_output="Answer 3."))
+Saving/Loading Datasets
+You can save and load EvalDataset objects locally and interact with the Judgment Platform.
+Remote access: Judgment Platform
+Local Formats: JSON, CSV, YAML
+The save_as methods and add_from_X methods are available for all three local formats. See the relevant code snippet below for a guide on how to save/load from each format!
+From Judgment Platform
+You can push your local EvalDataset to the Judgment platform or pull an existing one.
+dataset.py
+from judgeval import JudgmentClientfrom judgeval.data.datasets import EvalDatasetclient = JudgmentClient()client.push_dataset(alias="my_dataset", dataset=dataset, project_name="my_project")pulled_dataset = client.pull_dataset(alias="my_dataset", project_name="my_project")
+From JSON
+From CSV
+From YAML
+Evaluate On Your Dataset / Examples
+You can use the JudgmentClient to evaluate a collection of Examples using scorers.
+Want to learn more about running evaluations?
+Check out our evaluation scoring section for a deep dive.
+evaluate_dataset.py
+from judgeval import JudgmentClientfrom judgeval.scorers import FaithfulnessScorerclient = JudgmentClient()res = client.run_evaluation(    examples=dataset.examples,    scorers=[FaithfulnessScorer(threshold=0.9)],    model="gpt-4.1",)
+Exporting Datasets
+You can export your datasets from the Judgment Platform UI for backup purposes or sharing with team members.
+Export from Platform UI
+1. Navigate to your project in the Judgment Platform
+2. Select the dataset you want to export
+3. Click the "Download Dataset" button in the top right
+4. The dataset will be downloaded as a JSON file
+ Export Dataset 
+
+The exported JSON file contains the complete dataset information, including metadata and examples:
+{  "dataset_id": "f852eeee-87fa-4430-9571-5784e693326e",  "organization_id": "0fbb0aa8-a7b3-4108-b92a-cc6c6800d825",  "dataset_alias": "QA-Pairs",  "comments": null,  "source_file": null,  "created_at": "2025-04-23T22:38:11.709763+00:00",  "examples": [    {      "example_id": "119ee1f6-1046-41bc-bb89-d9fc704829dd",      "input": "How can I start meditating?",      "actual_output": null,      "expected_output": "Meditation is a wonderful way to relax and focus...",      "context": null,      "retrieval_context": null,      "additional_metadata": {        "synthetic": true      },      "tools_called": null,      "expected_tools": null,      "name": null,      "created_at": "2025-04-23T23:34:33.117479+00:00",      "dataset_id": "f852eeee-87fa-4430-9571-5784e693326e",      "eval_results_id": null,    },    // more examples...  ]}
+Unit Testing
+Use evals as unit tests in your CI pipelines
+judgeval enables you to unit test your agent against predefined tasks/inputs, with built-in support for common unit testing frameworks like pytest.
+Quickstart
+You can formulate evals as unit tests by checking if scorers exceed or fall below threshold values on a set of examples (test cases).
+The client.assert_test() runs evaluations as unit tests, raising an exception if the score falls below the defined threshold.
+unit_test.py
+from judgeval import JudgmentClientfrom judgeval.data import Examplefrom judgeval.scorers import FaithfulnessScorerclient = JudgmentClient()agent = ...  # your agenttask = "What if these shoes don't fit?"example = Example(    input=task,    actual_output=agent.run(task),  # e.g. "We offer a 30-day full refund at no extra cost."    retrieval_context=["All customers are eligible for a 44 day full refund at no extra cost."],)scorer = FaithfulnessScorer(threshold=0.5)client.assert_test(    examples=[example],    scorers=[scorer],    model="gpt-4.1",    project_name="my-first-test")
+Let's break down how assert_test() works:
+assert_test() will take each example from examples and pass the input to function as kwargs (in this case, the function is generate_itinerary) to generate an output. Then, the scorers will be applied to the output and if the score falls below the defined threshold, the test will fail with an exception raised.
+If an example fails, the test will report the failure like this:
+============================================================================
+⚠️ TEST RESULTS: 0/1 passed (1 failed)
+============================================================================
+
+
+✗ Test 1: FAILED
+Scorer: Faithfulness
+Score: 0.0
+Reason: The score is 0.00 because the output repeatedly misrepresented the refund policy, incorrectly stating it as 30 days instead of the 44 days specified in the retrieval context. None of the claims about a 30-day full refund are supported by the actual retrieval context.
+----------------------------------------
+
+
+=============================================================================
+Unit tests are treated as evals and the results are saved to your projects on the Judgment platform:
+ Unit test results 
+
+Pytest Integration
+judgeval integrates with pytest so you don't have to write any additional scaffolding for your agent unit tests. We'll reuse the code above and now expect a failure with pytest:
+unit_test.py
+import pytest...with pytest.raises(AssertionError):    client.assert_test(        examples=[example],        scorers=[scorer],        model="gpt-4.1",    )
+Test Suites From YAML
+If you have a large number of tests, you may find it convenient to store your test cases in a YAML file:
+# tests.yamlexamples:  - input:      "What if these shoes don't fit?"    expected_output:      "We offer a 30-day full refund at no extra cost."    retrieval_context:      - "All customers are eligible for a 44 day full refund at no extra cost."
+Then run the evaluation using the YAML file:
+from judgeval.utils.file_utils import get_examples_from_yamlclient.assert_test(    examples=get_examples_from_yaml("tests.yaml"),    scorers=[FaithfulnessScorer(threshold=0.5)],    model="gpt-4.1",)
+Evaluation/Scorers
+Introduction
+Scorers are used to evaluate agent systems based on specific criteria.
+Overview
+Want to see a new scorer?
+We're always adding new scorers to judgeval. If you have a suggestion, please let us know by opening a GitHub issue!
+Scorers execute on Examples and Dataset, producing a numerical score.
+Categories of Scorers
+judgeval supports three implementations of scorers.
+Default Scorers: plug-and-play scorers carefully crafted by our research team.
+Custom Scorers: Powerful scorers that you can tailor to your own agent systems.
+Classifier Scorers: A custom scorer that evaluates based on a prompt you provide.
+Default Scorers
+Most built-in scorers in judgeval are implemented using LLM systems, leveraging prompt engineering to ensure evaluations are accurate and scalable. Each scorer provides transparent reasoning through detailed chains of thought, enabling validation of evaluation results.
+In line with our agent concepts, default scorers are divided by the agent module they are designed to evaluate. This includes planning, tool calling, abilities, and memory.
+Custom Scorers
+Classifier Scorers
+Running Scorers
+All scorers in judgeval can be run uniformly through the JudgmentClient. All scorers are set to run in async mode by default in order to support parallelized evaluations for large datasets.
+run_scorer.py
+from judgeval import JudgmentClientexample = ...  # your choicescorer = ...client = JudgmentClient()results = client.run_evaluation(    examples=[example],    scorers=[scorer],    model="gpt-4.1",)
+Evaluation/Scorers/Planning
+Execution Order
+The ExecutionOrder scorer is a default scorer that checks whether your LLM agent traversed the correct path in your execution graph. This scorer is an algorithm-based scorer that does not rely on an LLM judge.
+In practice, this allows you to assess the quality of an LLM agent's tool choice and applied use of tools as well as the order of node visits.
+Required Fields
+To run the ExecutionOrder scorer, you must include the following fields in your Example:
+* actual_output
+* expected_output
+Scorer Breakdown
+The execution order score is calculated in different ways depending on how you configure the scorer.
+Set Match (Default)
+Calculates the score based on the intersection of the actual and expected actions. The score is the size of the intersection divided by the total number of expected actions.
+This configuration is useful when all you care about is that the correct tools were called in any order with other possible tools too.
+set_match.py
+scorer = ExecutionOrderScorer(threshold=0.8)
+Execution Order=Intersection of Actual and Expected ActionsTotal Number of Actions
+Execution Order=
+Total Number of Actions
+Intersection of Actual and Expected Actions
+​
+Ordering Match
+Uses the Longest Common Subsequence (LCS) to calculate the score. The score is the length of the LCS divided by the length of the expected output. If the LCS is the same as the expected output, the score is 1.0, otherwise it is 0.0.
+This configuration is useful when you care about the ordering of the tools called but are fine with other tools being within the path.
+ordering_match.py
+scorer = ExecutionOrderScorer(threshold=0.8, should_consider_ordering=True)
+Exact Match
+Checks that the actual output matches the expected output exactly. Returns a score of 1.0 if they match, otherwise 0.0.
+This configuration is useful when you care about the exact ordering of the tools called.
+exact_match.py
+scorer = ExecutionOrderScorer(threshold=0.8, should_exact_match=True)
+Sample Implementation
+from judgeval import JudgmentClientfrom judgeval.data import Examplefrom judgeval.scorers import ToolCorrectnessScorerclient = JudgmentClient()example = Example(    actual_output=["GoogleSearch", "Perplexity"],    expected_output=["DBQuery", "GoogleSearch"],)# supply your own thresholdscorer = ExecutionOrderScorer(threshold=0.8)results = client.run_evaluation(    examples=[example],    scorers=[scorer],)print(results)
+Evaluation/Scorers/Tool Calling
+Tool Order
+The Tool Order scorer is an agentic scorer that evaluates whether tools are called in the correct sequence and optionally with the correct parameters.
+This is particularly useful for evaluating agent workflows where the order of tool calls matters for the overall success of the task.
+Scorer Breakdown
+The Tool Order scorer offers two distinct scoring modes that can be configured to match your evaluation needs.
+Ordering Match (Default)
+Checks that the ordering of the tools called is the same as the expected ordering. Returns a score of 1.0 if they match, otherwise 0.0.
+This score is useful when you care about the ordering of the tools called but are fine with other tools being within the path.
+ordering_match.py
+scorer = ToolOrderScorer()
+Exact Match
+Checks that the ordering of the tools called is exactly the same as the expected ordering. Returns a score of 1.0 if they match, otherwise 0.0.
+This score is useful when you care about the exact ordering of the tools called.
+exact_match.py
+scorer = ToolOrderScorer(exact_match=True)
+Additionally, if tool parameters are included in the expected ordering, they will be checked against the actual parameters used. If parameters are not specified, only the tool order will be evaluated.
+Example Agent Tool Structure
+Here's how to structure your agent and tools with the @judgment.observe decorator:
+Python (Vanilla)LangGraph (Python)
+vanilla_agent.py
+from judgeval.tracer import Tracerjudgment = Tracer(project_name="my_agent")class MyAgent:  # sample agent, replace with your own    @judgment.observe(span_type="tool")    def get_attractions(self, destination: str) -> str:        """Get attractions for a destination"""        pass    @judgment.observe(span_type="tool")    def get_weather(self, destination: str, start_date: str, end_date: str) -> str:        """Get weather forecast for a destination"""        pass    @judgment.observe(span_type="function")    def run_agent(self, prompt: str) -> str:        """Run the agent with the given prompt"""        attractions = self.get_attractions("Paris")  # replace with your own tool calling logic        weather = self.get_weather("Paris", "2025-06-01", "2025-06-02")  # replace with your own args        return f"Attractions: {attractions}\nWeather: {weather}"
+Sample Implementation
+Then you can use the ToolOrderScorer to evaluate the agent's tool selection/ordering:
+Python (Vanilla)LangGraph (Python)
+vanilla_agent.py
+from judgeval import JudgmentClientfrom judgeval.data import Examplefrom judgeval.scorers import ToolOrderScorerclient = JudgmentClient()# Define example with expected tool sequenceexample = Example(    input={"prompt": "What's the attraction and weather in Paris for early June 2025 (1st - 2nd)?"},    expected_tools=[        {            "tool_name": "get_attractions",            "parameters": {"destination": "Paris"}        },        {            "tool_name": "get_weather",            "parameters": {"destination": "Paris", "start_date": "2025-06-01", "end_date": "2025-06-02"}        }    ])agent = MyAgent()results = client.assert_test(    examples=[example],    scorers=[ToolOrderScorer(exact_match=True)],    function=agent.run_agent,    tracer=judgment)
+Try playing around with the inputs and expected outputs to simulate different tool calling situations, like when the agent fails.
+You can also define your test cases in a YAML file:
+# tests.yamlexamples:  - input:      prompt: "What's the attraction and weather in Paris for early June 2025 (1st - 2nd)?"    expected_tools:      - tool_name: "get_attractions"        parameters:            destination: "Paris"      - tool_name: "get_weather"        parameters:            destination: "Paris"            start_date: "2025-06-01"            end_date: "2025-06-02"
+Then run the evaluation using the YAML file:
+Python (Vanilla)LangGraph (Python)
+from judgeval.utils.file_utils import get_examples_from_yamlclient.assert_test(    examples=get_examples_from_yaml("tests.yaml"),    scorers=[ToolOrderScorer(exact_match=True)],    function=agent.run_agent,    tracer=judgment)
+
+
+
+Monitoring
+
+Performance Monitoring
+Online Evals
+Run real-time evaluations on your agents in production.
+Quickstart
+Online evals are embedded as a method of the Tracer class. They can be attached to any trace and will be executed asynchronously, inducing no latency on your agent's response time.
+my_agent.py
+from judgeval.common.tracer import Tracer, wrapfrom judgeval.scorers import AnswerRelevancyScorerfrom judgeval.data import Examplefrom openai import OpenAIclient = wrap(OpenAI())judgment = Tracer(project_name="my_project")@judgment.observe(span_type="tool")def my_tool():    return "Hello world!"@judgment.observe(span_type="function")def main():    task_input = my_tool()    res = client.chat.completions.create(        model="gpt-4.1",        messages=[{"role": "user", "content": f"{task_input}"}]    ).choices[0].message.content    judgment.async_evaluate(        scorers=[AnswerRelevancyScorer(threshold=0.5)],        example=Example(            input=task_input,            actual_output=res        ),        model="gpt-4.1"    )    return resmain()
+You should see the online eval results attached to the relevant trace span on the Judgment platform shortly after the trace is recorded.
+Evals can take time to execute, so they may appear slightly delayed on the UI. Once the eval is complete, you should see it attached to your trace like this:
+ Trace with online eval

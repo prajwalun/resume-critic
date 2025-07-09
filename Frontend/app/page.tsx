@@ -6,8 +6,6 @@ import {
   FileText,
   Briefcase,
   Brain,
-  Moon,
-  Sun,
   CheckCircle,
   XCircle,
   Edit3,
@@ -28,996 +26,1275 @@ import {
   Clock,
   Users,
   BarChart3,
+  AlertCircle,
+  ChevronRight,
+  Loader,
+  X,
+  Check,
+  MessageSquare,
+  HelpCircle,
+  Loader2,
+  Edit2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogHeader, 
+  DialogTitle,
+  DialogFooter
+} from "@/components/ui/dialog"
 import { useTheme } from "next-themes"
-import { resumeCriticAPI, type ResumeAnalysisResponse, type ResumeBullet, type ClarificationRequest } from "@/lib/api"
 import { useRouter } from 'next/navigation'
-import { cleanResumeMarkdown } from "./resume-preview/page"
-import renderSection from "./resume-preview/page"
-import remarkGfm from "remark-gfm";
-import { formatResumeSections } from "./resume-preview/page";
-import ReactMarkdown from 'react-markdown';
+import { 
+  resumeWiseAPI, 
+  type AnalysisStartResponse, 
+  type SectionAnalysis, 
+  type SectionData,
+  type JobAnalysis,
+  APIError,
+  ValidationError,
+  NotFoundError
+} from "@/lib/api"
+import { Input } from "@/components/ui/input"
 
-interface CritiqueItem {
-  id: string
-  original: string
-  suggested: string
-  reason: string
-  category: "Experience" | "Education" | "Skills" | "Projects" | "Format"
-  impact: "High" | "Medium" | "Low"
-  sectionId?: string
-  needsClarification?: boolean
-  clarificationQuestion?: string
-  status: "pending" | "accepted" | "rejected" | "edited"
-  editedText?: string
+// Types and Interfaces
+interface AnalysisSession {
+  sessionId: string
+  sections: Record<string, SectionData>
+  jobAnalysis: JobAnalysis
+  analysisOrder: string[]
+  currentSectionIndex: number
+  sectionAnalyses: Record<string, SectionAnalysis>
+  acceptedChanges: Record<string, boolean>
 }
 
-export default function ResumeCriticAI() {
+interface ClarificationModal {
+  isOpen: boolean
+  sectionType: string
+  question: string
+  context: string
+  reason: string
+  userResponse: string
+}
+
+// Section type mapping for display
+const SECTION_DISPLAY_NAMES: Record<string, string> = {
+  'skills': 'Technical Skills',
+  'education': 'Education',
+  'experience': 'Professional Experience',
+  'projects': 'Projects',
+  'contact_info': 'Contact Information',
+  'summary': 'Professional Summary',
+  'certifications': 'Certifications'
+}
+
+const SECTION_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  'skills': Code,
+  'education': GraduationCap,
+  'experience': Building2,
+  'projects': Sparkles,
+  'contact_info': Users,
+  'summary': FileText,
+  'certifications': Shield
+}
+
+export default function ResumeWise() {
+  // State management
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [jobDescription, setJobDescription] = useState("")
+  const [isStarting, setIsStarting] = useState(false)
+  const [analysisSession, setAnalysisSession] = useState<AnalysisSession | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [critiques, setCritiques] = useState<CritiqueItem[]>([])
-  const [showResults, setShowResults] = useState(false)
-  const [analysisData, setAnalysisData] = useState<ResumeAnalysisResponse | null>(null)
-  const [clarificationModal, setClarificationModal] = useState<{
-    isOpen: boolean
-    sectionId: string
-    question: string
-    originalText: string
-    userResponse: string
-  }>({
+  const [error, setError] = useState<string | null>(null)
+  const [clarificationModal, setClarificationModal] = useState<ClarificationModal>({
     isOpen: false,
-    sectionId: "",
+    sectionType: "",
     question: "",
-    originalText: "",
+    context: "",
+    reason: "",
     userResponse: ""
   })
-  const [editModal, setEditModal] = useState<{
-    isOpen: boolean
-    critiqueId: string
-    originalText: string
-    suggestedText: string
-    editedText: string
-  }>({
-    isOpen: false,
-    critiqueId: "",
-    originalText: "",
-    suggestedText: "",
-    editedText: "",
-  })
   const [isProcessingClarification, setIsProcessingClarification] = useState(false)
-  const [isGeneratingFinal, setIsGeneratingFinal] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const { theme, setTheme } = useTheme()
   const [showFinalResume, setShowFinalResume] = useState(false)
   const [finalResume, setFinalResume] = useState("")
-  const [isPdfLoading, setIsPdfLoading] = useState(false)
+  const [isGeneratingFinal, setIsGeneratingFinal] = useState(false)
+  const [clarificationInput, setClarificationInput] = useState("")
+  const [isSubmittingClarification, setIsSubmittingClarification] = useState(false)
+  
+  // New state for undo functionality
+  const [undoHistory, setUndoHistory] = useState<Record<string, boolean | null>>({})
+  const [fileValidationError, setFileValidationError] = useState("")
+  
+  const { theme } = useTheme()
   const router = useRouter()
+
+  const validateResumeFile = (file: File): string | null => {
+    // Check file type
+    const allowedTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ]
+    
+    const allowedExtensions = ['.pdf', '.doc', '.docx', '.txt']
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase()
+    
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+      return "Please upload a valid resume file in PDF, DOC, DOCX, or TXT format."
+    }
+    
+    // Check file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024 // 10MB in bytes
+    if (file.size > maxSize) {
+      return "File size must be less than 10MB. Please compress your resume or use a different format."
+    }
+    
+    // Check if file is too small (likely empty)
+    if (file.size < 100) {
+      return "The uploaded file appears to be empty. Please upload a valid resume document."
+    }
+    
+    return null // No validation errors
+  }
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      setResumeFile(file)
-      setError(null)
+      const validationError = validateResumeFile(file)
+      if (validationError) {
+        setFileValidationError(validationError)
+        setResumeFile(null)
+        // Reset the input
+        event.target.value = ''
+      } else {
+        setFileValidationError("")
+        setResumeFile(file)
+      }
     }
   }
 
-  const handleAnalyze = async () => {
-    if (!resumeFile || !jobDescription.trim()) return
+  // 🔍 DEBUG: Monitor analysisSession state changes
+  useEffect(() => {
+    if (analysisSession) {
+      console.log("🔄 ANALYSIS SESSION STATE UPDATED:")
+      console.log("Session ID:", analysisSession.sessionId)
+      console.log("Sections keys:", Object.keys(analysisSession.sections))
+      console.log("Analysis order:", analysisSession.analysisOrder)
+      console.log("Section analyses keys:", Object.keys(analysisSession.sectionAnalyses))
+      
+      // Log each section in detail
+      Object.entries(analysisSession.sections).forEach(([sectionType, sectionData]) => {
+        console.log(`📄 Session Section ${sectionType}:`)
+        console.log(`  - Type: ${typeof sectionData}`)
+        console.log(`  - Keys: ${Object.keys(sectionData)}`)
+        console.log(`  - Content length: ${sectionData.content?.length || 0}`)
+        if (sectionData.content) {
+          console.log(`  - Content preview: "${sectionData.content.substring(0, 100)}..."`)
+        }
+      })
+    } else {
+      console.log("❌ analysisSession is null/undefined")
+    }
+  }, [analysisSession])
+
+  // Handlers
+  const handleStartAnalysis = async () => {
+    if (!resumeFile || !jobDescription.trim()) {
+      setError("Please provide both a resume file and job description")
+      return
+    }
+
+    setIsStarting(true)
+    setError(null)
+
+    try {
+      console.log("🚀 Starting analysis with file:", resumeFile.name)
+      const response = await resumeWiseAPI.startAnalysis(resumeFile, jobDescription)
+      
+      // 🔍 COMPREHENSIVE DEBUG: Full response analysis
+      console.log("=== COMPREHENSIVE DEBUG: API Response ===")
+      console.log("Raw response:", response)
+      console.log("Response type:", typeof response)
+      console.log("Response keys:", Object.keys(response))
+      console.log("Success:", response.success)
+      console.log("Session ID:", response.session_id)
+      console.log("Sections type:", typeof response.sections)
+      console.log("Sections keys:", response.sections ? Object.keys(response.sections) : "NO SECTIONS")
+      
+      // Check each section in detail
+      if (response.sections) {
+        console.log("📋 SECTION-BY-SECTION ANALYSIS:")
+        Object.entries(response.sections).forEach(([sectionType, sectionData]) => {
+          console.log(`\n🔍 Section: ${sectionType}`)
+          console.log(`  - Type: ${typeof sectionData}`)
+          console.log(`  - Keys: ${Object.keys(sectionData as any)}`)
+          console.log(`  - Has content field: ${'content' in (sectionData as any)}`)
+          console.log(`  - Content type: ${typeof (sectionData as any).content}`)
+          console.log(`  - Content length: ${(sectionData as any).content?.length || 0}`)
+          if ((sectionData as any).content) {
+            console.log(`  - Content preview: "${(sectionData as any).content.substring(0, 150)}..."`)
+        } else {
+            console.log(`  - ❌ NO CONTENT FOUND`)
+          }
+        })
+      } else {
+        console.log("❌ NO SECTIONS OBJECT IN RESPONSE")
+      }
+      
+      // Check section analyses
+      console.log("\n📊 SECTION ANALYSES:")
+      console.log("Section analyses type:", typeof response.section_analyses)
+      console.log("Section analyses keys:", response.section_analyses ? Object.keys(response.section_analyses) : "NO ANALYSES")
+      
+      if (response.section_analyses) {
+        Object.entries(response.section_analyses).forEach(([sectionType, analysis]) => {
+          console.log(`\n📈 Analysis: ${sectionType}`)
+          console.log(`  - Type: ${typeof analysis}`)
+          console.log(`  - Keys: ${Object.keys(analysis as any)}`)
+          console.log(`  - Original content length: ${(analysis as any).original_content?.length || 0}`)
+          console.log(`  - Has improved content: ${!!(analysis as any).improved_content}`)
+          console.log(`  - Score: ${(analysis as any).score}`)
+        })
+      }
+      
+      if (response.success && response.session_id) {
+        // Set up the complete analysis session with ALL results
+        const newSession = {
+          sessionId: response.session_id,
+          sections: response.sections || {},
+          jobAnalysis: response.job_analysis || {
+            keywords: [],
+            requirements: [],
+            experience_level: "mid",
+            key_technologies: [],
+            soft_skills: [],
+            hard_skills: [],
+            priorities: []
+          },
+          analysisOrder: response.analysis_order || [],
+          currentSectionIndex: 0,
+          sectionAnalyses: response.section_analyses || {},
+          acceptedChanges: {}
+        }
+        
+        console.log("💾 STORING SESSION DATA:")
+        console.log("Session object:", newSession)
+        console.log("Session sections keys:", Object.keys(newSession.sections))
+        console.log("Session analyses keys:", Object.keys(newSession.sectionAnalyses))
+        
+        setAnalysisSession(newSession)
+        
+        // Verify the state was set correctly
+        setTimeout(() => {
+          console.log("✅ VERIFICATION: Checking stored state after 100ms")
+          // This will be logged after state update
+        }, 100)
+        
+      } else {
+        setError(response.error || "Failed to start analysis")
+      }
+    } catch (error) {
+      console.error("💥 ERROR in handleStartAnalysis:", error)
+      if (error instanceof ValidationError) {
+        setError(`Invalid input: ${error.message}`)
+      } else if (error instanceof APIError) {
+        setError(`Analysis failed: ${error.message}`)
+      } else {
+        setError("An unexpected error occurred. Please try again.")
+      }
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const handleAnalyzeSection = async (sectionType: string) => {
+    if (!analysisSession) return
 
     setIsAnalyzing(true)
     setError(null)
 
     try {
-      const response = await resumeCriticAPI.analyzeResume(
-        resumeFile,
-        jobDescription,
-        true // review mode
-      )
-
-      if (response.success) {
-        const analysisData = (response as any).data || response
-        console.log("Analysis response:", response)
-        console.log("Analysis data:", analysisData)
-        setAnalysisData(analysisData)
+      const response = await resumeWiseAPI.analyzeSection(analysisSession.sessionId, sectionType)
+      
+      if (response.success && response.analysis) {
+        const analysis = response.analysis
         
-        if (analysisData.critiques && Array.isArray(analysisData.critiques)) {
-          const convertedCritiques: CritiqueItem[] = analysisData.critiques.map((critique: any) => ({
-            id: critique.id,
-            original: critique.original,
-            suggested: critique.suggested,
-            reason: critique.reason,
-            category: critique.category,
-            impact: critique.impact,
-            sectionId: critique.sectionId,
-            needsClarification: critique.needsClarification,
-            clarificationQuestion: critique.clarificationQuestion,
-            status: "pending"
-          }))
-          
-          setCritiques(convertedCritiques)
-        } else {
-          setCritiques([])
-        }
-        
-        setShowResults(true);
-      } else {
-        setError("Analysis failed. Please try again.")
-      }
-    } catch (error) {
-      console.error("Analysis error:", error)
-      setError(error instanceof Error ? error.message : "An unexpected error occurred")
-    } finally {
-    setIsAnalyzing(false)
-    }
-  }
+        // Update session with analysis
+        setAnalysisSession(prev => ({
+          ...prev!,
+          sectionAnalyses: {
+            ...prev!.sectionAnalyses,
+            [sectionType]: analysis
+          }
+        }))
 
-  const handleClarification = async (sectionId: string, question: string, originalText: string) => {
+        // Only show clarification modal if specifically requested AND user response needed
+        if (analysis.needs_clarification && analysis.clarification_request && !analysis.improved_content) {
     setClarificationModal({
       isOpen: true,
-      sectionId,
-      question,
-      originalText,
-      userResponse: "",
-    })
+            sectionType,
+            question: analysis.clarification_request.question,
+            context: analysis.clarification_request.context,
+            reason: analysis.clarification_request.reason,
+            userResponse: ""
+          })
+        }
+      } else {
+        setError(response.error || "Failed to analyze section")
+      }
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        setError("Analysis session not found. Please start a new analysis.")
+      } else if (error instanceof APIError) {
+        setError(`Section analysis failed: ${error.message}`)
+      } else {
+        setError("An unexpected error occurred during analysis.")
+      }
+    } finally {
+      setIsAnalyzing(false)
+    }
   }
 
   const handleSubmitClarification = async () => {
-    if (!analysisData || !clarificationModal.userResponse.trim()) return
+    if (!analysisSession || !clarificationModal.userResponse.trim()) return
 
-    setIsProcessingClarification(true)
+    setIsSubmittingClarification(true)
 
     try {
-      const request: ClarificationRequest = {
-        analysis_id: (analysisData as any).analysis_id,
-        section_id: clarificationModal.sectionId,
-        user_response: clarificationModal.userResponse,
-        original_text: clarificationModal.originalText,
-        question: clarificationModal.question,
-      }
+      const response = await resumeWiseAPI.provideClarification(
+        analysisSession.sessionId,
+        clarificationModal.sectionType,
+        clarificationModal.userResponse
+      )
 
-      const response = await resumeCriticAPI.processClarification(request)
-
-      if (response.success) {
-        const responseData = (response as any).data || response
-        
-        setCritiques(prev => prev.map(critique => {
-          if (critique.sectionId === clarificationModal.sectionId) {
-            return {
-              ...critique,
-              suggested: responseData.improved_section.improved_text,
-              reason: responseData.improved_section.improvement_explanation,
-              needsClarification: false,
-            }
+      if (response.success && response.analysis) {
+        // Update session with new analysis
+        setAnalysisSession(prev => ({
+          ...prev!,
+          sectionAnalyses: {
+            ...prev!.sectionAnalyses,
+            [clarificationModal.sectionType]: response.analysis!
           }
-          return critique
         }))
 
+        // Close clarification modal
         setClarificationModal({
           isOpen: false,
-          sectionId: "",
+          sectionType: "",
           question: "",
-          originalText: "",
-          userResponse: "",
+          context: "",
+          reason: "",
+          userResponse: ""
         })
       } else {
-        setError("Failed to process clarification. Please try again.")
+        setError(response.error || "Failed to process clarification")
       }
     } catch (error) {
-      console.error("Clarification error:", error)
-      setError(error instanceof Error ? error.message : "An unexpected error occurred")
+      if (error instanceof APIError) {
+        setError(`Clarification failed: ${error.message}`)
+      } else {
+        setError("An unexpected error occurred during clarification.")
+      }
     } finally {
-      setIsProcessingClarification(false)
+      setIsSubmittingClarification(false)
     }
   }
 
-  const handleAccept = (id: string) => {
-    setCritiques(prev => prev.map(critique => 
-      critique.id === id ? { ...critique, status: "accepted" } : critique
-    ))
+  const handleAcceptChanges = async (sectionType: string, accepted: boolean) => {
+    if (!analysisSession) return
+
+    // Store previous state for undo
+    const previousState = analysisSession.acceptedChanges[sectionType] ?? null
+    setUndoHistory(prev => ({
+      ...prev,
+      [sectionType]: previousState
+    }))
+
+    // Update current state
+    setAnalysisSession(prev => {
+      if (!prev) return null
+      return {
+        ...prev,
+        acceptedChanges: {
+          ...prev.acceptedChanges,
+          [sectionType]: accepted
+        }
+      }
+    })
   }
 
-  const handleReject = (id: string) => {
-    setCritiques(prev => prev.map(critique => 
-      critique.id === id ? { ...critique, status: "rejected" } : critique
-    ))
-  }
+  const handleUndoChanges = (sectionType: string) => {
+    if (!analysisSession) return
 
-  const handleUndo = (id: string) => {
-    setCritiques(prev => prev.map(critique => 
-      critique.id === id ? { ...critique, status: "pending" } : critique
-    ))
-  }
+    const previousState = undoHistory[sectionType]
+    
+    setAnalysisSession(prev => {
+      if (!prev) return null
+      const newAcceptedChanges = { ...prev.acceptedChanges }
+      
+      if (previousState === null) {
+        delete newAcceptedChanges[sectionType]
+      } else {
+        newAcceptedChanges[sectionType] = previousState
+      }
+      
+      return {
+        ...prev,
+        acceptedChanges: newAcceptedChanges
+      }
+    })
 
-  const handleEdit = (id: string) => {
-    const critique = critiques.find(c => c.id === id)
-    if (critique) {
-      setEditModal({
-        isOpen: true,
-        critiqueId: id,
-        originalText: critique.original,
-        suggestedText: critique.suggested,
-        editedText: critique.suggested,
-      })
-    }
-  }
-
-  const handleSaveEdit = () => {
-    setCritiques(prev => prev.map(critique => 
-      critique.id === editModal.critiqueId 
-        ? { ...critique, status: "edited", editedText: editModal.editedText }
-        : critique
-    ))
-    setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })
+    // Clear undo history for this section
+    setUndoHistory(prev => {
+      const newHistory = { ...prev }
+      delete newHistory[sectionType]
+      return newHistory
+    })
   }
 
   const handleGenerateFinalResume = async () => {
-    if (!analysisData) return
+    if (!analysisSession) return
 
     setIsGeneratingFinal(true)
+    setError(null)
 
     try {
-      const acceptedChanges = critiques
-        .filter(critique => critique.status === "accepted" || critique.status === "edited" || critique.status === "rejected")
-        .reduce((acc, critique) => {
-          // Send "improved" for accepted/edited and "original" for rejected
-          acc[critique.sectionId || critique.id] = (critique.status === "accepted" || critique.status === "edited") ? "improved" : "original"
-          return acc
-        }, {} as Record<string, string>)
-
-      const response = await resumeCriticAPI.generateFinalResume({
-        analysis_id: (analysisData as any).analysis_id,
-        accepted_changes: acceptedChanges
-      })
-
-      if (response.success) {
-        const finalResumeData = (response as any).data || response
-        setFinalResume(finalResumeData.final_resume)
-        setShowFinalResume(true)
-        // Store in sessionStorage for preview fallback
-        if (typeof window !== 'undefined') {
-          window.sessionStorage.setItem('last_final_resume', finalResumeData.final_resume || '')
-          window.sessionStorage.setItem('last_analysis_id', finalResumeData.analysis_id || '')
+      const response = await resumeWiseAPI.generateFinalResume(analysisSession.sessionId)
+      
+      if (response.success && response.final_resume) {
+        setFinalResume(response.final_resume)
+        
+        // 🔧 ENHANCED: Store detailed session data for preview page
+        const sessionData = {
+          sessionId: analysisSession.sessionId,
+          sections: analysisSession.sections,
+          sectionAnalyses: analysisSession.sectionAnalyses,
+          acceptedChanges: analysisSession.acceptedChanges,
+          analysisOrder: analysisSession.analysisOrder,
+          finalResume: response.final_resume
         }
+        
+        // Store in sessionStorage for preview page access
+        window.sessionStorage.setItem("analysis_session_data", JSON.stringify(sessionData))
+        window.sessionStorage.setItem("last_analysis_id", analysisSession.sessionId)
+        window.sessionStorage.setItem("last_final_resume", response.final_resume)
+        
+        setShowFinalResume(true)
       } else {
-        setError("Failed to generate final resume. Please try again.")
+        setError(response.error || "Failed to generate final resume")
       }
     } catch (error) {
-      console.error("Final resume generation error:", error)
-      setError(error instanceof Error ? error.message : "An unexpected error occurred")
+      if (error instanceof APIError) {
+        setError(`Resume generation failed: ${error.message}`)
+      } else {
+        setError("An unexpected error occurred during resume generation.")
+      }
     } finally {
       setIsGeneratingFinal(false)
     }
   }
 
-  const getCategoryFromScore = (score: number): "Experience" | "Education" | "Skills" | "Projects" | "Format" => {
-    if (score >= 80) return "Experience"
-    if (score >= 60) return "Education"
-    if (score >= 40) return "Skills"
-    if (score >= 20) return "Projects"
-    return "Format"
-  }
+  const handleClarificationSubmit = async (sectionType: string) => {
+    if (!analysisSession || !clarificationInput.trim()) return
 
-  const getImpactFromScore = (score: number): "High" | "Medium" | "Low" => {
-    if (score >= 7) return "High"
-    if (score >= 4) return "Medium"
-    return "Low"
-  }
+    setIsSubmittingClarification(true)
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case "Experience": return <Briefcase className="w-4 h-4" />
-      case "Education": return <GraduationCap className="w-4 h-4" />
-      case "Skills": return <Code className="w-4 h-4" />
-      case "Projects": return <Building2 className="w-4 h-4" />
-      case "Format": return <FileText className="w-4 h-4" />
-      default: return <FileText className="w-4 h-4" />
-    }
-  }
-
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case "Experience": return "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-      case "Education": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
-      case "Skills": return "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
-      case "Projects": return "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300"
-      case "Format": return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
-      default: return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
-    }
-  }
-
-  const getImpactColor = (impact: string) => {
-    switch (impact) {
-      case "High": return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-      case "Medium": return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-      case "Low": return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-      default: return "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300"
-    }
-  }
-
-  // Modern Modal Component
-  const Modal = ({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) => {
-    if (!open) return null;
-
-    useEffect(() => {
-      const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-      document.addEventListener("keydown", handleKey);
-      return () => document.removeEventListener("keydown", handleKey);
-    }, [onClose]);
-
-  return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-          {children}
-        </div>
-      </div>
-    );
-  };
-
-  function formatResumeSection(text: string, highlightDiffs: boolean = false, diffLines: Set<number> = new Set()) {
-    if (!text) return ""
-    
-    const lines = text.split('\n')
-    return lines.map((line, index) => {
-      const isDiffLine = diffLines.has(index)
-      const className = highlightDiffs && isDiffLine 
-        ? "bg-emerald-100 dark:bg-emerald-900/30 border-l-4 border-emerald-500 pl-3 py-1 rounded-r-lg" 
-        : ""
-      
-      return (
-        <div key={index} className={className}>
-          {line || '\u00A0'}
-        </div>
+    try {
+      const response = await resumeWiseAPI.provideClarification(
+        analysisSession.sessionId,
+        sectionType,
+        clarificationInput
       )
-    })
-  }
 
-  function getDiffLines(original: string, suggested: string): Set<number> {
-    const originalLines = original.split('\n')
-    const suggestedLines = suggested.split('\n')
-    const diffLines = new Set<number>()
-    
-    suggestedLines.forEach((line, index) => {
-      if (originalLines[index] !== line) {
-        diffLines.add(index)
+      if (response.success && response.analysis) {
+        setAnalysisSession(prev => ({
+          ...prev!,
+          sectionAnalyses: {
+            ...prev!.sectionAnalyses,
+            [sectionType]: response.analysis!
+          }
+        }))
+        setClarificationInput("")
+      } else {
+        setError(response.error || "Failed to submit clarification")
       }
-    })
-    
-    return diffLines
-  }
-
-  // Utility to parse a section into heading and content
-  function parseSection(section: string) {
-    const lines = section.trim().split(/\n+/);
-    const heading = lines[0]?.replace(/^#+\s*/, "").trim();
-    const content = lines.slice(1).join("\n").trim();
-    return { heading, content };
-  }
-
-  // Utility to render a section with proper formatting
-  function renderSection(section: string, i: number) {
-    const { heading, content } = parseSection(section);
-    // Skills/Technologies/Tools: chips
-    if (/skills|technologies|tools|languages|certifications/i.test(heading || "")) {
-      const items = content.split(/[,•\-\n]+/).map(s => s.trim()).filter(Boolean);
-      return (
-        <section key={i} className="resume-section mb-10">
-          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
-          <ul className="resume-list flex flex-wrap gap-2">
-            {items.map((item, idx) => <li key={idx} className="resume-chip bg-emerald-50 text-emerald-800 px-3 py-1 rounded-full text-sm font-medium border border-emerald-100">{item}</li>)}
-          </ul>
-        </section>
-      );
+    } catch (error) {
+      if (error instanceof APIError) {
+        setError(`Clarification failed: ${error.message}`)
+      } else {
+        setError("An unexpected error occurred during clarification.")
+      }
+    } finally {
+      setIsSubmittingClarification(false)
     }
-    // Experience/Projects/Education: block entries
-    if (/projects|experience|education/i.test(heading || "")) {
-      // Split by double newlines or project markers
-      const entries = content.split(/\n{2,}|(?=^([A-Z][^\n]+\|[^\n]+|\*\*.+\*\*))/gm).map(e => e.trim()).filter(Boolean);
-      // Track subheadings to avoid repetition
-      const seenSubheadings = new Set();
-      return (
-        <section key={i} className="resume-section mb-10">
-          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
-          <div className="space-y-8">
-            {entries.map((entry, idx) => {
-              // Remove markdown bold/italic artifacts
-              let cleanEntry = entry.replace(/\*\*|__/g, '').replace(/\*/g, '');
-              // Try to split job/project/degree line and details
-              const [firstLine, ...rest] = cleanEntry.split('\n');
-              let title = firstLine, meta = '', details = rest.join('\n').trim();
-              // For education, try to split degree, institution, date/location
-              if (/education/i.test(heading || "")) {
-                const eduMatch = firstLine.match(/^(.*?)(?:,|\|)(.*?)(\d{4}.*)?$/);
-                if (eduMatch) {
-                  title = eduMatch[1].trim();
-                  meta = [eduMatch[2], eduMatch[3]].filter(Boolean).join(' | ').trim();
-                }
-              } else {
-                // For experience/projects
-                const match = firstLine.match(/^(.*?\|.*?)\|\s*(.*?\d{4}.*?)\s*(.*)$/);
-                if (match) {
-                  title = match[1].trim();
-                  meta = match[2].trim();
-                  details = (match[3] + '\n' + details).trim();
-                }
-              }
-              // Remove repeated subheadings (e.g., 'Relevant Coursework')
-              let detailsNode = null;
-              let lines = details.split(/\n/).map(l => l.trim()).filter(Boolean);
-              lines = lines.filter(line => {
-                const lower = line.toLowerCase();
-                if (/^(relevant coursework|achievements?|responsibilities?|skills?):?$/i.test(lower)) {
-                  if (seenSubheadings.has(lower)) return false;
-                  seenSubheadings.add(lower);
-                }
-                return true;
-              });
-              // If details look like a list or comma-separated, render as bullets
-              if (lines.length > 1 || /,/.test(details)) {
-                let items = lines;
-                if (lines.length === 1 && /,/.test(lines[0])) {
-                  items = lines[0].split(/,|•|\u2022/).map(s => s.trim()).filter(Boolean);
-                }
-                detailsNode = (
-                  <ul className="list-disc ml-6 space-y-1">
-                    {items.map((l, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{l}</li>)}
-                  </ul>
-                );
-              } else if (details) {
-                detailsNode = <div className="text-slate-700 text-base leading-relaxed font-normal whitespace-pre-line">{details}</div>;
-              }
-              return (
-                <div key={idx} className="mb-4">
-                  <div className="font-bold text-lg text-slate-900 mb-1">{title}</div>
-                  {meta && <div className="text-slate-500 text-sm mb-1">{meta}</div>}
-                  {detailsNode}
-                </div>
-              );
-            })}
+  }
+
+  const downloadResume = () => {
+    const element = document.createElement("a")
+    const file = new Blob([finalResume], { type: "text/plain" })
+    element.href = URL.createObjectURL(file)
+    element.download = "ResumeWise-Resume.txt"
+    document.body.appendChild(element)
+    element.click()
+    document.body.removeChild(element)
+  }
+
+  const resetAnalysis = () => {
+    setAnalysisSession(null)
+    setShowFinalResume(false)
+    setFinalResume("")
+    setResumeFile(null)
+    setJobDescription("")
+    setError(null)
+  }
+
+  // Render functions
+  const renderUploadSection = () => (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {/* Professional Header */}
+      <div className="border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-6 py-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center shadow-lg border border-slate-600/30">
+                <span className="text-white font-bold text-xl">RW</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-100">ResumeWise</h1>
+                <p className="text-slate-400 text-sm">Professional Resume Analysis</p>
+              </div>
+            </div>
           </div>
-        </section>
-      );
-    }
-    // Default: paragraph or list
-    if (new RegExp('^[-*] ', 'm').test(content) || /,/.test(content)) {
-      let items = content.split(/\n/).map(l => l.trim()).filter(Boolean);
-      if (items.length === 1 && /,/.test(items[0])) {
-        items = items[0].split(/,|•|\u2022/).map(s => s.trim()).filter(Boolean);
-      }
-      return (
-        <section key={i} className="resume-section mb-10">
-          <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
-          <ul className="list-disc ml-6 space-y-1">
-            {items.map((l, j) => <li key={j} className="text-slate-700 text-base leading-relaxed font-normal">{l}</li>)}
-          </ul>
-        </section>
-      );
-    }
-    return (
-      <section key={i} className="resume-section mb-10">
-        <h2 className="resume-heading text-2xl font-bold text-emerald-700 mb-4 tracking-tight">{heading}</h2>
-        <div className="text-slate-700 text-base leading-relaxed font-normal whitespace-pre-line">{content}</div>
-      </section>
-    );
-  }
-
-  function renderFormattedSectionFromMarkdown(md: string) {
-    return (
-      <div className="prose max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+        </div>
       </div>
-    );
-  }
 
-  function preprocessForMarkdown(text: string, fallbackHeading: string) {
-    if (!text) return '';
-    let md = text.trim();
-    // If no heading, add one
-    if (!/^#+ /.test(md)) {
-      md = `## ${fallbackHeading}\n` + md;
-    }
-    // For experience/education/projects, don't bulletize, just preserve structure
-    if (/(experience|education|project)/i.test(fallbackHeading)) {
-      return md;
-    }
-    // If not already markdown bullets, but has multiple sentences, try to bulletize
-    if (!/\n[-*] /.test(md) && /\n/.test(md)) {
-      const lines = md.split('\n').map(l => l.trim());
-      if (lines.length > 2) {
-        const heading = lines[0];
-        const rest = lines.slice(1).map(l => l ? `- ${l}` : '').join('\n');
-        md = `${heading}\n${rest}`;
-      }
-    }
-    return md;
-  }
-
-  // Add a new utility to further clean and format resume markdown for display
-  function formatResumeMarkdown(md: string) {
-    // Remove duplicate subheadings within a section
-    md = md.replace(/(Relevant Coursework:)([\s\S]*?)(?=Relevant Coursework:|$)/g, (block: string) => {
-      // Only keep the first 'Relevant Coursework:' per section
-      const lines = block.split('\n');
-      const seen = new Set();
-      return lines.filter((line: string) => {
-        if (/^Relevant Coursework:/i.test(line)) {
-          if (seen.has('rc')) return false;
-          seen.add('rc');
-        }
-        return true;
-      }).join('\n');
-    });
-    // Bulletize comma-separated lists
-    md = md.replace(/(Relevant Coursework:|Skills:|Technologies:|Tools:|Languages:|Achievements:|Responsibilities:)[ \t]*\n?([^-\n][^\n]*)/gi, (match: string, heading: string, items: string) => {
-      if (!items) return match;
-      const bullets = items.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
-      if (bullets.length > 1) {
-        return `${heading}\n` + bullets.map((b: string) => `- ${b}`).join('\n');
-      }
-      return match;
-    });
-    // Bulletize any line with multiple comma-separated items (not already a list)
-    md = md.replace(/^(?![-*] )([^\n]+,[^\n]+)$/gm, (line: string) => {
-      const items = line.split(/,|•|\u2022/).map((s: string) => s.trim()).filter(Boolean);
-      if (items.length > 1) {
-        return items.map((b: string) => `- ${b}`).join('\n');
-      }
-      return line;
-    });
-    // Remove extra blank lines
-    md = md.replace(/\n{3,}/g, '\n\n');
-    return md;
-  }
-
-  const renderCritiques = () => (
-    <div className="space-y-6 animate-fade-in">
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
-          AI Analysis Results
+      {/* Main Content */}
+      <div className="max-w-5xl mx-auto px-6 py-16">
+        <div className="text-center mb-12">
+          <h2 className="text-4xl lg:text-5xl font-bold text-slate-100 mb-6 leading-tight">
+            Resume Analysis System
           </h2>
-        <p className="text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          Review and refine your resume with our AI-powered suggestions. Each recommendation is tailored to your target role.
+          <p className="text-xl text-slate-300 max-w-3xl mx-auto leading-relaxed">
+            Upload your resume and provide the target job description for comprehensive analysis and optimization.
           </p>
         </div>
 
-      <div className="grid gap-6">
-        {critiques.map((critique) => {
-          const diffLines = getDiffLines(critique.original, critique.suggested)
-          const isAccepted = critique.status === "accepted"
-          const isRejected = critique.status === "rejected"
-          const isEdited = critique.status === "edited"
-
-          return (
-            <Card key={critique.id} className={`card-modern transition-all duration-300 ${isAccepted ? 'ring-2 ring-emerald-500/20' : isRejected ? 'ring-2 ring-red-500/20' : ''}`}>
-              <CardHeader className="pb-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className={`p-2 rounded-lg ${getCategoryColor(critique.category)}`}>
-                      {getCategoryIcon(critique.category)}
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg font-semibold text-slate-900 dark:text-white">
-                        {critique.category} Improvement
-                      </CardTitle>
-                      <div className="flex items-center space-x-2 mt-1">
-                        <Badge className={`badge-modern ${getCategoryColor(critique.category)}`}>
-                          {critique.category}
-                        </Badge>
-                        <Badge className={`badge-modern ${getImpactColor(critique.impact)}`}>
-                          {critique.impact} Impact
-                        </Badge>
-                        {critique.needsClarification && (
-                          <Badge className="badge-modern bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                            Needs Clarification
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
+        {/* Upload Interface - Fixed Alignment */}
+        <div className="bg-slate-800/50 backdrop-blur-xl rounded-3xl border border-slate-700/50 shadow-2xl overflow-hidden">
+          <div className="p-8 lg:p-12">
+            <div className="grid lg:grid-cols-2 gap-12">
+              {/* Resume Upload - Improved Layout */}
+              <div className="space-y-6 flex flex-col">
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 bg-gradient-to-r from-slate-600 to-slate-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg border border-slate-600/30">
+                    <Upload className="w-8 h-8 text-slate-200" />
                   </div>
-                  <div className="flex items-center gap-3">
-                    {critique.status === "pending" && (
-                      <>
-                        <Button onClick={() => handleAccept(critique.id)} className="btn-primary flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
-                          <CheckCircle className="w-4 h-4" /> Accept
-                        </Button>
-                        <Button onClick={() => handleReject(critique.id)} className="btn-danger flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
-                          <XCircle className="w-4 h-4" /> Reject
-                        </Button>
-                        <Button onClick={() => handleEdit(critique.id)} className="btn-secondary flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
-                          <Edit3 className="w-4 h-4" /> Edit
-                        </Button>
-                      </>
-                    )}
-                    {(isAccepted || isRejected || isEdited) && (
-                      <Button onClick={() => handleUndo(critique.id)} className="btn-ghost flex items-center gap-2 text-sm px-5 py-2 min-w-[110px]">
-                        <RefreshCw className="w-4 h-4" /> Undo
-                      </Button>
-                    )}
-                  </div>
+                  <h3 className="text-xl font-semibold text-slate-100 mb-3">Resume Upload</h3>
+                  <p className="text-slate-400">
+                    Upload your current resume for analysis
+                  </p>
                 </div>
-              </CardHeader>
-
-              <CardContent className="space-y-6">
-                {critique.needsClarification && critique.clarificationQuestion && (
-                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
-                    <div className="flex items-start space-x-3">
-                      <MessageCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">
-                          Clarification Needed
-                        </h4>
-                        <p className="text-amber-800 dark:text-amber-200 mb-3">
-                          {critique.clarificationQuestion}
-                        </p>
-                        <Button 
-                          onClick={() => handleClarification(critique.sectionId!, critique.clarificationQuestion!, critique.original)}
-                          className="btn-primary text-sm"
-                        >
-                          Provide Details
-                        </Button>
-                      </div>
+                
+                <div className="flex-1 flex flex-col">
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.doc,.docx"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    id="resume-upload"
+                  />
+                  <label
+                    htmlFor="resume-upload"
+                    className={`
+                      relative block w-full h-64 border-2 border-dashed rounded-2xl cursor-pointer transition-all duration-300 group flex flex-col items-center justify-center
+                      ${resumeFile 
+                        ? 'border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/20' 
+                        : 'border-slate-600/50 bg-slate-700/30 hover:bg-slate-700/50 hover:border-slate-500/50'
+                      }
+                    `}
+                  >
+                    <div className="text-center">
+                      {resumeFile ? (
+                        <>
+                          <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-4 group-hover:scale-110 transition-transform" />
+                          <div className="text-lg font-semibold text-emerald-300 mb-2">
+                            File Successfully Uploaded
+                          </div>
+                          <div className="text-emerald-400/80 text-sm font-medium">
+                            {resumeFile.name}
+                          </div>
+                          <div className="text-slate-400 text-sm mt-1">
+                            {(resumeFile.size / 1024 / 1024).toFixed(1)} MB
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4 group-hover:text-slate-300 group-hover:scale-110 transition-all" />
+                          <div className="text-lg font-semibold text-slate-200 mb-2">
+                            Select Resume File
+                          </div>
+                          <div className="text-slate-400 text-sm">
+                            PDF, DOC, DOCX, or TXT • Maximum 10MB
+                          </div>
+                        </>
+                      )}
                     </div>
+                  </label>
+                </div>
+
+                {resumeFile && (
+                  <div className="text-center mt-4">
+                    <button
+                      onClick={() => setResumeFile(null)}
+                      className="text-red-400 hover:text-red-300 text-sm transition-colors underline"
+                    >
+                      Remove File
+                    </button>
                   </div>
                 )}
 
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="font-semibold text-slate-900 mb-3 flex items-center">
-                      <FileText className="w-4 h-4 mr-2 text-slate-500" />
-                      Current Version
-                    </h4>
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                      {critique.original && critique.original.trim() ? (
-                        renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.original, critique.category || 'Section'))
-                      ) : (
-                        <div className="text-slate-400 italic">No original content available.</div>
-                      )}
+                {/* File Validation Error */}
+                {fileValidationError && (
+                  <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+                    <div className="flex items-center gap-2 text-red-300">
+                      <AlertCircle className="w-5 h-5" />
+                      <span className="font-medium">{fileValidationError}</span>
                     </div>
                   </div>
+                )}
+              </div>
 
-                  <div>
-                    <h4 className="font-semibold text-slate-900 mb-3 flex items-center">
-                      <Sparkles className="w-4 h-4 mr-2 text-emerald-500" />
-                      Agent Suggestion
-                    </h4>
-                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                      {critique.status === "edited" && critique.editedText
-                        ? renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.editedText, critique.category || 'Section'))
-                        : renderFormattedSectionFromMarkdown(preprocessForMarkdown(critique.suggested, critique.category || 'Section'))}
-                    </div>
+              {/* Job Description - Improved Layout */}
+              <div className="space-y-6 flex flex-col">
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 bg-gradient-to-r from-slate-600 to-slate-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg border border-slate-600/30">
+                    <Briefcase className="w-8 h-8 text-slate-200" />
                   </div>
-                </div>
-
-                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
-                  <h4 className="font-semibold text-slate-900 dark:text-white mb-2 flex items-center">
-                    <Lightbulb className="w-4 h-4 mr-2 text-amber-500" />
-                    Why This Change?
-                  </h4>
-                  <p className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed">
-                    {critique.reason}
+                  <h3 className="text-xl font-semibold text-slate-100 mb-3">Target Position</h3>
+                  <p className="text-slate-400">
+                    Provide the job description for targeted analysis
                   </p>
                 </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
 
-      {critiques.length > 0 && (
-        <div className="text-center pt-8">
-          <Button 
-            onClick={handleGenerateFinalResume}
-            disabled={isGeneratingFinal || critiques.every(c => c.status === "pending")}
-            className="btn-primary text-lg px-8 py-4"
-          >
-            {isGeneratingFinal ? (
-              <>
-                <div className="progress-ring mr-3" />
-                Generating Final Resume...
-              </>
-            ) : (
-              <>
-                <Download className="w-5 h-5 mr-3" />
-                Generate Final Resume
-              </>
+                <div className="flex-1 flex flex-col">
+                  <Textarea
+                    placeholder="Paste the complete job description including requirements, responsibilities, and qualifications..."
+                    value={jobDescription}
+                    onChange={(e) => setJobDescription(e.target.value)}
+                    className="flex-1 h-64 resize-none bg-slate-700/50 border-slate-600/50 text-slate-100 placeholder:text-slate-400 focus:border-slate-500/50 focus:ring-slate-500/20 rounded-2xl p-6 text-base backdrop-blur-sm transition-all duration-200 overflow-y-auto scrollbar-thin scrollbar-track-slate-800 scrollbar-thumb-slate-600"
+                  />
+                </div>
+
+                {jobDescription && (
+                  <div className="p-4 bg-slate-700/30 rounded-xl border border-slate-600/30 mt-4">
+                    <div className="flex items-center gap-2 text-slate-300">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">Job description ready for analysis</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Error Display */}
+            {error && (
+              <div className="mt-8 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+                <div className="flex items-center gap-2 text-red-300">
+                  <AlertCircle className="w-5 h-5" />
+                  <span className="font-medium">{error}</span>
+                </div>
+              </div>
             )}
-          </Button>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-3">
-            Accept or edit suggestions to enable final resume generation
-          </p>
-        </div>
-      )}
-    </div>
-  )
 
-  const renderFinalResume = () => (
-    <div className="animate-fade-in">
-      {/* Top bar with New Analysis button and download icon */}
-      <div className="flex items-center justify-between mb-6">
-        <Button onClick={() => {
-          setShowFinalResume(false)
-          setShowResults(false)
-          setCritiques([])
-          setAnalysisData(null)
-          setResumeFile(null)
-          setJobDescription("")
-        }} className="btn-secondary">
-          <RefreshCw className="w-4 h-4 mr-2" /> New Analysis
-        </Button>
-        <button
-          className="btn-ghost relative group"
-          onClick={() => downloadTxt("ResumeWise-Resume.txt", finalResume)}
-          title="Download as TXT"
-          style={{ padding: 8, borderRadius: 8 }}
-        >
-          <Download className="w-6 h-6 text-slate-500 group-hover:text-blue-600 transition" />
-          <span className="tooltip group-hover:opacity-100 group-focus:opacity-100">Download as TXT</span>
-        </button>
-      </div>
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
-          Your Improved Resume
-        </h2>
-        <p className="text-slate-600 dark:text-slate-400">
-          Here's your resume with all accepted improvements applied.
-        </p>
-      </div>
-      <div className="resume-card">
-        <div className="max-w-3xl mx-auto">
-          {renderFormattedSectionFromMarkdown(finalResume)}
-        </div>
-      </div>
-    </div>
-  )
-
-  // Utility function for downloading
-  function downloadTxt(filename: string, text: string) {
-    const element = document.createElement("a");
-    const file = new Blob([text], { type: "text/plain" });
-    element.href = URL.createObjectURL(file);
-    element.download = filename;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  }
-
-  // Loading overlay
-  const LoadingOverlay = ({ show, text }: { show: boolean; text?: string }) => show ? (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-      <div className="card-modern p-8 text-center">
-        <div className="progress-ring mx-auto mb-4" />
-        <p className="text-lg font-semibold text-slate-900 dark:text-white">
-          {text || "Processing..."}
-        </p>
-      </div>
-    </div>
-  ) : null
-
-  function ClarificationInputModal({ question, value, onChange, onCancel, onSubmit, isProcessing }: {
-    question: string;
-    value: string;
-    onChange: (val: string) => void;
-    onCancel: () => void;
-    onSubmit: () => void;
-    isProcessing: boolean;
-  }) {
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    useEffect(() => {
-      if (textareaRef.current) textareaRef.current.focus();
-    }, []);
-    return (
-      <div className="p-6">
-        <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">
-          Provide Additional Details
-        </h3>
-        <p className="text-slate-600 dark:text-slate-400 mb-4">
-          {question}
-        </p>
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder="Enter your response..."
-          className="input-modern mb-4 min-h-[120px]"
-        />
-        <div className="flex justify-end space-x-3">
-          <Button onClick={onCancel} className="btn-secondary">
-            Cancel
-          </Button>
-          <Button onClick={onSubmit} disabled={isProcessing || !value.trim()} className="btn-primary">
-            {isProcessing ? "Processing..." : "Submit"}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (showFinalResume) {
-    return renderFinalResume()
-  }
-
-  if (showResults) {
-    return (
-      <div className="animate-fade-in">
-        {renderCritiques()}
-        
-        <Modal open={clarificationModal.isOpen} onClose={() => setClarificationModal({ isOpen: false, sectionId: "", question: "", originalText: "", userResponse: "" })}>
-          <ClarificationInputModal
-            question={clarificationModal.question}
-            value={clarificationModal.userResponse}
-            onChange={val => setClarificationModal(prev => ({ ...prev, userResponse: val }))}
-            onCancel={() => setClarificationModal({ isOpen: false, sectionId: "", question: "", originalText: "", userResponse: "" })}
-            onSubmit={handleSubmitClarification}
-            isProcessing={isProcessingClarification}
-          />
-        </Modal>
-
-        <Modal open={editModal.isOpen} onClose={() => setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })}>
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">
-              Edit Suggestion
-            </h3>
-            <Textarea
-              value={editModal.editedText}
-              onChange={(e) => setEditModal(prev => ({ ...prev, editedText: e.target.value }))}
-              placeholder="Edit the suggested text..."
-              className="input-modern mb-4 min-h-[200px]"
-            />
-            <div className="flex justify-end space-x-3">
-              <Button 
-                onClick={() => setEditModal({ isOpen: false, critiqueId: "", originalText: "", suggestedText: "", editedText: "" })}
-                className="btn-secondary"
+            {/* Start Analysis Button - Improved Alignment */}
+            <div className="mt-12 flex flex-col items-center">
+              <Button
+                onClick={handleStartAnalysis}
+                disabled={!resumeFile || !jobDescription.trim() || isStarting}
+                size="lg"
+                className="bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white shadow-xl hover:shadow-2xl transition-all duration-300 disabled:opacity-50 px-12 py-4 text-lg font-semibold rounded-2xl border border-slate-600/30"
               >
-                Cancel
+                {isStarting ? (
+                  <>
+                    <Loader className="w-6 h-6 mr-3 animate-spin" />
+                    Analyzing Resume...
+                  </>
+                ) : (
+                  <>
+                    <BarChart3 className="w-6 h-6 mr-3" />
+                    Begin Analysis
+                  </>
+                )}
               </Button>
-              <Button 
-                onClick={handleSaveEdit}
-                className="btn-primary"
-              >
-                Save Changes
-              </Button>
+              
+              {resumeFile && jobDescription && !isStarting && (
+                <p className="text-slate-400 text-sm mt-4">
+                  Ready to analyze your resume
+                </p>
+              )}
             </div>
           </div>
-        </Modal>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderSectionAnalysis = () => {
+    if (!analysisSession) return null
+
+    const { analysisOrder, sectionAnalyses, sections, jobAnalysis } = analysisSession
+    const analyzedCount = Object.keys(sectionAnalyses).length
+    const totalCount = analysisOrder.length
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        {/* Professional Header */}
+        <div className="border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-xl">
+          <div className="max-w-7xl mx-auto px-6 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center shadow-lg border border-slate-600/30">
+                  <span className="text-white font-bold text-xl">RW</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-100">ResumeWise</h1>
+                  <p className="text-slate-400 text-sm">Professional Resume Analysis</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="px-4 py-2 bg-slate-700/50 backdrop-blur-sm rounded-lg border border-slate-600/30">
+                  <span className="text-slate-300 text-sm font-medium">
+                    {analyzedCount}/{totalCount} sections processed
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="max-w-7xl mx-auto px-6 py-12">
+          {/* Header */}
+          <div className="text-center mb-12">
+            <h2 className="text-4xl lg:text-5xl font-bold text-slate-100 mb-6 leading-tight">
+              Analysis Results
+            </h2>
+            <p className="text-xl text-slate-300 max-w-3xl mx-auto leading-relaxed">
+              Review each section's analysis. Accept or reject changes to customize your final resume.
+            </p>
+          </div>
+
+          {/* Job Analysis Summary - Simplified */}
+          {(jobAnalysis.key_technologies.length > 0 || jobAnalysis.requirements.length > 0) && (
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl p-8 mb-12">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30">
+                  <Target className="w-5 h-5 text-slate-300" />
+                </div>
+                <h3 className="text-xl font-semibold text-slate-100">Target Position Analysis</h3>
+              </div>
+              
+              <div className="grid md:grid-cols-2 gap-8">
+                {jobAnalysis.key_technologies.length > 0 && (
+                  <div>
+                    <h4 className="text-lg font-medium text-slate-200 mb-4 flex items-center gap-2">
+                      <Code className="w-4 h-4 text-slate-400" />
+                      Key Technologies
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {jobAnalysis.key_technologies.slice(0, 8).map((tech, idx) => (
+                        <span key={idx} className="px-3 py-1 bg-slate-700/50 text-slate-300 text-sm rounded-lg border border-slate-600/30">
+                          {tech}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {jobAnalysis.requirements.length > 0 && (
+                  <div>
+                    <h4 className="text-lg font-medium text-slate-200 mb-4 flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-slate-400" />
+                      Core Requirements
+                    </h4>
+                    <ul className="space-y-2">
+                      {jobAnalysis.requirements.slice(0, 3).map((req, idx) => (
+                        <li key={idx} className="flex items-start gap-3 text-slate-300">
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-400 mt-2 flex-shrink-0" />
+                          <span className="text-sm leading-relaxed">{req}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Section Analysis Cards */}
+          <div className="space-y-8">
+            {analysisOrder.map((sectionType) => {
+              const section = sections[sectionType]
+              const analysis = sectionAnalyses[sectionType]
+              const isAccepted = analysisSession.acceptedChanges[sectionType]
+              const isRejected = isAccepted === false
+              const hasUndoHistory = undoHistory[sectionType] !== undefined
+              const SectionIcon = SECTION_ICONS[sectionType] || FileText
+              
+              const displayScore = analysis ? Math.round(analysis.score / 20) : 0
+              
+              // Get content for display - FIXED: Proper content selection
+              let originalContent = ""
+              let improvedContent = ""
+              
+              if (analysis?.original_content) {
+                originalContent = analysis.original_content
+              } else if (section?.content) {
+                originalContent = section.content
+              }
+              
+              if (analysis?.improved_content) {
+                improvedContent = analysis.improved_content
+              }
+              
+              const hasValidContent = originalContent && originalContent.length > 0
+
+              return (
+                <div key={sectionType} className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden">
+                  {/* Section Header */}
+                  <div className="bg-slate-700/30 border-b border-slate-600/30 p-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30">
+                          <SectionIcon className="w-5 h-5 text-slate-300" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-semibold text-slate-100">
+                            {SECTION_DISPLAY_NAMES[sectionType] || sectionType}
+                          </h3>
+                          {analysis && (
+                            <div className="flex items-center gap-6 mt-1">
+                              <div className="flex items-center gap-2">
+                                <Star className="w-4 h-4 text-yellow-500" />
+                                <span className="text-slate-400 text-sm">
+                                  Score: {displayScore}/5
+                                </span>
+                              </div>
+                              {isAccepted && (
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                                  <span className="text-emerald-400 text-sm">
+                                    Changes Accepted
+                                  </span>
+                                </div>
+                              )}
+                              {isRejected && (
+                                <div className="flex items-center gap-2">
+                                  <XCircle className="w-4 h-4 text-red-400" />
+                                  <span className="text-red-400 text-sm">
+                                    Changes Rejected
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section Content */}
+                  <div className="p-6">
+                    {!hasValidContent ? (
+                      <div className="text-center py-12">
+                        <div className="w-12 h-12 bg-yellow-500/20 rounded-lg flex items-center justify-center mx-auto mb-4">
+                          <AlertCircle className="w-6 h-6 text-yellow-400" />
+                        </div>
+                        <h4 className="text-lg font-semibold text-slate-200 mb-2">No Content Available</h4>
+                        <p className="text-slate-400">This section was not found in your resume.</p>
+                      </div>
+                    ) : !analysis ? (
+                      <div className="text-center py-12">
+                        <Loader className="w-6 h-6 mx-auto mb-4 animate-spin text-slate-400" />
+                        <p className="text-slate-400">Analyzing section...</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {/* Content Comparison */}
+                        <div className="grid lg:grid-cols-2 gap-6">
+                          {/* Original Content */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-4">
+                              <FileText className="w-4 h-4 text-slate-400" />
+                              <h4 className="text-sm font-medium text-slate-300">Original Content</h4>
+                            </div>
+                            <div className="bg-slate-700/30 border border-slate-600/30 rounded-lg p-4">
+                              <pre className="whitespace-pre-wrap text-sm text-slate-200 font-sans leading-relaxed">
+                                {originalContent}
+                              </pre>
+                            </div>
+                          </div>
+
+                          {/* Improved Content */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-4">
+                              <Edit3 className="w-4 h-4 text-slate-400" />
+                              <h4 className="text-sm font-medium text-slate-300">Suggested Improvements</h4>
+                            </div>
+                            <div className="bg-slate-700/30 border border-slate-600/30 rounded-lg p-4">
+                              {improvedContent ? (
+                                <pre className="whitespace-pre-wrap text-sm text-slate-200 font-sans leading-relaxed">
+                                  {improvedContent}
+                                </pre>
+                              ) : (
+                                <p className="text-slate-400 text-sm italic">No improvements suggested</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Analysis Feedback */}
+                        {analysis.feedback && (
+                          <div className="bg-slate-700/20 border border-slate-600/30 rounded-lg p-4">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30 flex-shrink-0">
+                                <Lightbulb className="w-4 h-4 text-slate-400" />
+                              </div>
+                              <div>
+                                <h5 className="text-sm font-medium text-slate-200 mb-2">Analysis Notes</h5>
+                                <p className="text-slate-300 text-sm leading-relaxed">{analysis.feedback}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        {improvedContent && (
+                          <div className="flex gap-3 pt-4 border-t border-slate-600/30">
+                            <Button
+                              onClick={() => handleAcceptChanges(sectionType, true)}
+                              disabled={isAccepted === true}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg disabled:opacity-50"
+                            >
+                              <CheckCircle className="w-4 h-4 mr-2" />
+                              {isAccepted === true ? 'Changes Accepted' : 'Accept Changes'}
+                            </Button>
+                            <Button
+                              onClick={() => handleAcceptChanges(sectionType, false)}
+                              disabled={isAccepted === false}
+                              variant="outline"
+                              className="border-red-400/30 text-red-400 hover:bg-red-500/10 hover:border-red-400/50 disabled:opacity-50"
+                            >
+                              <XCircle className="w-4 h-4 mr-2" />
+                              {isAccepted === false ? 'Changes Rejected' : 'Reject Changes'}
+                            </Button>
+                            {hasUndoHistory && (
+                              <Button
+                                onClick={() => handleUndoChanges(sectionType)}
+                                variant="outline"
+                                className="border-slate-600/30 text-slate-400 hover:bg-slate-700/30"
+                              >
+                                <RefreshCw className="w-4 h-4 mr-2" />
+                                Undo
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Generate Final Resume Button */}
+          <div className="mt-12 text-center">
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl p-8">
+              <div className="max-w-2xl mx-auto">
+                <h3 className="text-2xl font-semibold text-slate-100 mb-4">Generate Final Resume</h3>
+                <p className="text-slate-300 mb-6 leading-relaxed">
+                  Ready to create your final resume with all approved changes applied.
+                </p>
+                <Button 
+                  onClick={handleGenerateFinalResume}
+                  disabled={isGeneratingFinal}
+                  size="lg"
+                  className="bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white shadow-xl hover:shadow-2xl transition-all duration-300 px-8 py-3 text-lg font-medium rounded-xl border border-slate-600/30"
+                >
+                  {isGeneratingFinal ? (
+                    <>
+                      <Loader className="w-5 h-5 mr-3 animate-spin" />
+                      Generating Resume...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-5 h-5 mr-3" />
+                      Generate Resume
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
 
-  return (
-    <div className="animate-fade-in">
-      {/* Hero Section */}
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center space-x-2 bg-emerald-100 text-emerald-800 px-4 py-2 rounded-full text-sm font-medium mb-6">
-          <span className="inline-block w-4 h-4 bg-[var(--accent)] rounded-full" />
-          <span>AI-Powered Resume Analysis</span>
-        </div>
-        <h1 className="hero-title">
-          Transform Your Resume with <span className="hero-highlight">AI Intelligence</span>
-        </h1>
-        <p className="text-xl text-slate-600 max-w-3xl mx-auto leading-relaxed">
-          Get professional, personalized feedback on your resume. Our AI analyzes your content against job requirements and provides actionable improvements.
-        </p>
-      </div>
+  const renderFinalResume = () => {
+    if (!finalResume) return null
 
-      {/* Features Grid */}
-      <div className="grid md:grid-cols-3 gap-6 mb-12">
-        <div className="card-modern text-center p-6">
-          <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <span className="inline-block w-6 h-6 bg-blue-400 rounded-full" />
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">AI Analysis</h3>
-          <p className="text-slate-600 text-sm">Advanced AI reviews your resume against job requirements</p>
-        </div>
-
-        <div className="card-modern text-center p-6">
-          <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <span className="inline-block w-6 h-6 bg-emerald-400 rounded-full" />
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Targeted Feedback</h3>
-          <p className="text-slate-600 text-sm">Personalized suggestions based on your target role</p>
-        </div>
-
-        <div className="card-modern text-center p-6">
-          <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <span className="inline-block w-6 h-6 bg-purple-400 rounded-full" />
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Instant Results</h3>
-          <p className="text-slate-600 text-sm">Get comprehensive feedback in seconds, not days</p>
-        </div>
-                  </div>
-
-      {/* Upload Section */}
-      <Card className="card-modern max-w-4xl mx-auto">
-        <CardHeader className="text-center pb-6">
-          <CardTitle className="text-2xl font-bold text-slate-900 mb-2">
-            Upload Your Resume
-                </CardTitle>
-          <CardDescription className="text-slate-600">
-            Upload your resume and provide the job description for targeted analysis
-                </CardDescription>
-              </CardHeader>
-
-        <CardContent className="space-y-6">
-          {/* File Upload */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3">
-              Resume File (PDF, DOCX, TXT)
-            </label>
-            <div className={`upload-area ${resumeFile ? 'border-emerald-500 bg-emerald-50' : ''}`}>
-              <input
-                type="file"
-                accept=".pdf,.docx,.txt"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="resume-upload"
-              />
-              <label htmlFor="resume-upload" className="cursor-pointer">
-                <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                <p className="text-lg font-medium text-slate-900 mb-2">
-                  {resumeFile ? resumeFile.name : "Choose a file or drag it here"}
-                </p>
-                <p className="text-sm text-slate-500">
-                  {resumeFile ? "File selected successfully" : "Supports PDF, DOCX, and TXT formats"}
-                </p>
-              </label>
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        {/* Professional Header */}
+        <div className="border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-xl">
+          <div className="max-w-6xl mx-auto px-6 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center shadow-lg border border-slate-600/30">
+                  <span className="text-white font-bold text-xl">RW</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-100">ResumeWise</h1>
+                  <p className="text-slate-400 text-sm">Professional Resume Analysis</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <Button
+                  onClick={downloadResume}
+                  className="bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white shadow-lg border border-slate-600/30"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download Resume
+                </Button>
+                <Button
+                  onClick={resetAnalysis}
+                  variant="outline"
+                  className="border-slate-600/30 text-slate-300 hover:bg-slate-700/30"
+                >
+                  New Analysis
+                </Button>
+              </div>
             </div>
           </div>
+        </div>
 
-          {/* Job Description */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3">
-              Job Description
-            </label>
-                <Textarea
-                  value={jobDescription}
-                  onChange={(e) => setJobDescription(e.target.value)}
-              placeholder="Paste the job description here to get targeted feedback..."
-              className="input-modern min-h-[120px] resize-none"
-                />
-            <p className="text-sm text-slate-500 mt-2">
-              The more detailed the job description, the better our analysis will be.
+        {/* Main Content */}
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          {/* Header */}
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-bold text-slate-100 mb-4">
+              Final Resume
+            </h2>
+            <p className="text-lg text-slate-300 leading-relaxed">
+              Your resume has been processed with your approved improvements.
             </p>
           </div>
 
-          {/* Error Display */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-              <p className="text-red-800 text-sm">{error}</p>
+          {/* Resume Content */}
+          <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl p-8 lg:p-12">
+            <div className="bg-white rounded-lg shadow-2xl p-8 lg:p-12 max-w-4xl mx-auto">
+              <pre className="whitespace-pre-wrap text-gray-800 font-sans leading-relaxed text-sm lg:text-base">
+                {finalResume}
+              </pre>
             </div>
-          )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
-          {/* Analyze Button */}
-          <div className="text-center pt-4">
+  
+
+  // Main render
+  return (
+    <div className="min-h-screen">
+      {/* Error Display */}
+      {error && (
+        <Alert className="mb-6 border-red-200 bg-red-50">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <AlertDescription className="text-red-800">{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Main Content */}
+      {showFinalResume ? renderFinalResume() : 
+       analysisSession ? renderSectionAnalysis() : 
+       renderUploadSection()}
+
+      {/* Professional Clarification Modal */}
+      <Dialog open={clarificationModal.isOpen} onOpenChange={(open) => {
+        if (!open) {
+          setClarificationModal({
+            isOpen: false,
+            sectionType: "",
+            question: "",
+            context: "",
+            reason: "",
+            userResponse: ""
+          })
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden bg-white shadow-2xl border-0 rounded-2xl">
+          {/* Header with gradient background */}
+          <div className="relative -m-6 mb-6 p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <div className="absolute inset-0 bg-black/10 backdrop-blur-sm"></div>
+            <DialogHeader className="relative z-10">
+              <DialogTitle className="flex items-center gap-3 text-2xl font-bold">
+                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                  <MessageCircle className="w-5 h-5" />
+        </div>
+                Additional Information Required: {SECTION_DISPLAY_NAMES[clarificationModal.sectionType]} Section
+              </DialogTitle>
+              <DialogDescription className="text-blue-100 text-lg mt-2 leading-relaxed">
+                Please provide additional details to enhance the content quality and alignment with the target position.
+              </DialogDescription>
+            </DialogHeader>
+      </div>
+
+          <div className="space-y-8 max-h-[60vh] overflow-y-auto px-2">
+            {/* Question Card */}
+            <div className="relative">
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                    <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                    </svg>
+          </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-lg font-semibold text-blue-900 mb-3">Information Requested:</h3>
+                    <p className="text-blue-800 leading-relaxed text-base">{clarificationModal.question}</p>
+        </div>
+          </div>
+              </div>
+        </div>
+
+            {/* Context Card */}
+            {clarificationModal.context && (
+              <div className="bg-gradient-to-r from-slate-50 to-gray-50 border border-slate-200 rounded-xl p-6 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-slate-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                    <Lightbulb className="w-6 h-6 text-white" />
+          </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-3">Background Context:</h3>
+                    <p className="text-slate-700 leading-relaxed text-base">{clarificationModal.context}</p>
+        </div>
+                  </div>
+              </div>
+            )}
+
+            {/* Response Input Section */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                  </svg>
+            </div>
+                <h3 className="text-lg font-semibold text-slate-900">Your Response</h3>
+          </div>
+
+              <div className="relative">
+                <Textarea
+                  value={clarificationModal.userResponse}
+                  onChange={(e) => setClarificationModal(prev => ({
+                    ...prev,
+                    userResponse: e.target.value
+                  }))}
+                  placeholder="Please provide specific details such as technologies used, team size, measurable outcomes, timeframes, or achievements. Detailed information enables more effective content enhancement."
+                  className="min-h-[180px] text-base leading-relaxed resize-none border-2 border-slate-200 rounded-xl p-4 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all duration-200 shadow-sm"
+                  rows={8}
+                />
+                <div className="absolute bottom-3 right-3 text-xs text-slate-400 bg-white px-2 py-1 rounded-lg border">
+                  {clarificationModal.userResponse.length} characters
+                </div>
+              </div>
+          </div>
+
+            {/* Pro Tips Section */}
+            <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-6 shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                  <Star className="w-6 h-6 text-white" />
+            </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-lg font-semibold text-emerald-900 mb-3">Guidelines for Optimal Results:</h3>
+                  <div className="space-y-2 text-emerald-800">
+                    <div className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-2 flex-shrink-0"></div>
+                      <p className="text-sm leading-relaxed"><strong>Quantify results:</strong> Include specific numbers, percentages, and timeframes</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-2 flex-shrink-0"></div>
+                      <p className="text-sm leading-relaxed"><strong>Technical details:</strong> List specific technologies, tools, and methodologies used</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-2 flex-shrink-0"></div>
+                      <p className="text-sm leading-relaxed"><strong>Business impact:</strong> Describe results, improvements, or value delivered</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-2 flex-shrink-0"></div>
+                      <p className="text-sm leading-relaxed"><strong>Project scope:</strong> Include team sizes, budgets, or duration when applicable</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center justify-between pt-6 border-t border-slate-200 mt-8">
             <Button
-              onClick={handleAnalyze}
-              disabled={!resumeFile || !jobDescription.trim() || isAnalyzing}
-              className="btn-primary text-lg px-8 py-4"
+              onClick={() => setClarificationModal({
+                isOpen: false,
+                sectionType: "",
+                question: "",
+                context: "",
+                reason: "",
+                userResponse: ""
+              })}
+              variant="outline"
+              disabled={isProcessingClarification}
+              className="px-6 py-3 text-base border-slate-300 text-slate-600 hover:bg-slate-50 transition-all duration-200"
             >
-              {isAnalyzing ? (
-                <>
-                  <div className="progress-ring mr-3" />
-                  Analyzing Resume...
+              Skip This Step
+            </Button>
+            
+            <div className="flex items-center gap-3">
+              <div className="text-sm text-slate-500">
+                {clarificationModal.userResponse.trim() ? "Information provided" : "Please provide details above"}
+              </div>
+              <Button
+                onClick={handleSubmitClarification}
+                disabled={isProcessingClarification || !clarificationModal.userResponse.trim()}
+                className="px-8 py-3 text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 disabled:transform-none disabled:opacity-50"
+              >
+                {isProcessingClarification ? (
+                  <>
+                    <Loader className="w-5 h-5 mr-3 animate-spin" />
+                    Processing Enhancement...
                 </>
               ) : (
                 <>
-                  <Zap className="w-5 h-5 mr-3" />
-                  Analyze Resume
+                    <CheckCircle className="w-5 h-5 mr-3" />
+                    Submit Information
                 </>
               )}
             </Button>
-            <p className="text-sm text-slate-500 mt-3">
-              Upload both files to start your analysis
-            </p>
                     </div>
-                  </CardContent>
-                </Card>
-
-      {/* Loading Overlay */}
-      <LoadingOverlay show={isAnalyzing} text="Analyzing your resume..." />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

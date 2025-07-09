@@ -1,115 +1,135 @@
-// API service for Resume Critic AI backend integration
+/**
+ * ResumeWise API Client
+ * 
+ * TypeScript client for the ResumeWise backend API.
+ * Provides structured section-by-section resume analysis with human-in-the-loop clarification.
+ */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-export interface ResumeAnalysisRequest {
+// Request/Response Types
+
+export interface AnalysisStartRequest {
   job_description: string;
-  review_mode: boolean;
+}
+
+export interface AnalysisStartResponse {
+  success: boolean;
+  session_id?: string;
+  sections?: Record<string, SectionData>;
+  job_analysis?: JobAnalysis;
+  analysis_order?: string[];
+  section_analyses?: Record<string, SectionAnalysis>;  // Include all section analyses
+  error?: string;
+}
+
+export interface SectionData {
+  type: string;
+  content: string;
+  original_type: string;
+  metadata: SectionMetadata;
+}
+
+export interface SectionMetadata {
+  word_count: number;
+  has_metrics: boolean;
+  has_dates: boolean;
+  length: number;
+}
+
+export interface JobAnalysis {
+  keywords: string[];
+  requirements: string[];
+  experience_level: string;
+  key_technologies: string[];
+  soft_skills: string[];
+  hard_skills: string[];
+  priorities: string[];
+}
+
+export interface SectionAnalysisRequest {
+  session_id: string;
+  section_type: string;
+}
+
+export interface SectionAnalysisResponse {
+  success: boolean;
+  analysis?: SectionAnalysis;
+  error?: string;
+}
+
+export interface SectionAnalysis {
+  section_type: string;
+  original_content: string;
+  improved_content?: string;
+  score: number;
+  feedback: string;
+  needs_clarification: boolean;
+  clarification_request?: ClarificationRequest;
+  user_context?: string;
 }
 
 export interface ClarificationRequest {
-  analysis_id: string;
-  section_id: string;
-  user_response: string;
-  original_text: string;
   question: string;
+  context: string;
+  reason: string;
 }
 
-export interface FinalResumeRequest {
-  analysis_id: string;
-  accepted_changes: Record<string, string>; // section_id -> "original" or "improved"
-}
-
-export interface BulletEvaluation {
-  clarity_score: number;
-  impact_score: number;
-  relevance_score: number;
-  overall_score: number;
-  category: 'strong' | 'needs_improvement' | 'missing_metrics' | 'vague';
-  explanation: string;
-  strengths: string[];
-  weaknesses: string[];
-  suggestions: string[];
-  needs_clarification: {
-    required: boolean;
-    question: string;
-    type: string;
-  };
-}
-
-export interface BulletImprovement {
-  improved_text: string;
-  changes_made: string[];
-  improvement_reason: string;
-  confidence: 'high' | 'medium' | 'low';
-}
-
-export interface ResumeBullet {
-  id: string;
-  original_text: string;
-  evaluation: BulletEvaluation;
-  improvement?: BulletImprovement;
-  needs_clarification: boolean;
-}
-
-export interface ResumeSection {
-  id: string;
-  title: string;
-  bullets: ResumeBullet[];
-  original_text: string;
-}
-
-export interface AnalysisSummary {
-  total_sections: number;
-  sections_analyzed: number;
-  sections_needing_clarification: number;
-  overall_score: number;
-  job_keywords: string[];
-  strong_sections: number;
-  needs_improvement: number;
-}
-
-export interface ResumeAnalysisResponse {
-  success: boolean;
-  data: {
-    analysis_id: string;
-    sections: any[];
-    critiques: any[];
-    summary: AnalysisSummary;
-    job_description: string;
-    review_mode: boolean;
-  };
+export interface ClarificationSubmitRequest {
+  session_id: string;
+  section_type: string;
+  user_response: string;
 }
 
 export interface ClarificationResponse {
   success: boolean;
-  improved_section: {
-    improved_text: string;
-    original_text: string;
-    user_clarification: string;
-    improvement_explanation: string;
-    section_id: string;
-  };
-  analysis_id: string;
-  message: string;
+  analysis?: SectionAnalysis;
+  error?: string;
+}
+
+export interface AcceptChangesRequest {
+  session_id: string;
+  section_type: string;
+  accepted: boolean;
+}
+
+export interface AcceptChangesResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface FinalResumeRequest {
+  session_id: string;
 }
 
 export interface FinalResumeResponse {
   success: boolean;
-  final_resume: {
-    resume_text: string;
-    sections: Array<{
-      title: string;
-      content: string[];
-    }>;
-    accepted_changes_count: number;
-    analysis_id: string;
-  };
-  analysis_id: string;
-  message: string;
+  final_resume?: string;
+  sections?: string[];
+  session_id?: string;
+  error?: string;
 }
 
-class APIError extends Error {
+export interface SessionStatusResponse {
+  success: boolean;
+  session_id?: string;
+  current_phase?: string;
+  sections_analyzed?: number;
+  pending_clarifications?: number;
+  created_at?: string;
+  updated_at?: string;
+  error?: string;
+}
+
+export interface HealthCheckResponse {
+  status: string;
+  service: string;
+}
+
+// Error Classes
+
+export class APIError extends Error {
   constructor(
     message: string,
     public status: number,
@@ -120,7 +140,23 @@ class APIError extends Error {
   }
 }
 
-class ResumeCriticAPI {
+export class ValidationError extends APIError {
+  constructor(message: string, data?: any) {
+    super(message, 400, data);
+    this.name = 'ValidationError';
+  }
+}
+
+export class NotFoundError extends APIError {
+  constructor(message: string = 'Resource not found') {
+    super(message, 404);
+    this.name = 'NotFoundError';
+  }
+}
+
+// Main API Client
+
+export class ResumeWiseAPI {
   private baseURL: string;
 
   constructor(baseURL: string = API_BASE_URL) {
@@ -146,11 +182,15 @@ class ResumeCriticAPI {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new APIError(
-          errorData.detail || `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          errorData
-        );
+        const errorMessage = errorData.detail || `HTTP ${response.status}: ${response.statusText}`;
+        
+        if (response.status === 404) {
+          throw new NotFoundError(errorMessage);
+        } else if (response.status === 400) {
+          throw new ValidationError(errorMessage, errorData);
+        } else {
+          throw new APIError(errorMessage, response.status, errorData);
+        }
       }
 
       return await response.json();
@@ -188,11 +228,15 @@ class ResumeCriticAPI {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new APIError(
-          errorData.detail || `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          errorData
-        );
+        const errorMessage = errorData.detail || `HTTP ${response.status}: ${response.statusText}`;
+        
+        if (response.status === 404) {
+          throw new NotFoundError(errorMessage);
+        } else if (response.status === 400) {
+          throw new ValidationError(errorMessage, errorData);
+        } else {
+          throw new APIError(errorMessage, response.status, errorData);
+        }
       }
 
       return await response.json();
@@ -207,50 +251,143 @@ class ResumeCriticAPI {
     }
   }
 
+  // API Methods
+
+  /**
+   * Start a new resume analysis session
+   */
+  async startAnalysis(
+    file: File,
+    jobDescription: string
+  ): Promise<AnalysisStartResponse> {
+    return this.uploadFile('/api/start-analysis', file, {
+      job_description: jobDescription,
+    });
+  }
+
+  /**
+   * Analyze a specific section of the resume
+   */
+  async analyzeSection(
+    sessionId: string,
+    sectionType: string
+  ): Promise<SectionAnalysisResponse> {
+    return this.request('/api/analyze-section', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+        section_type: sectionType,
+      }),
+    });
+  }
+
+  /**
+   * Provide clarification for a section and regenerate analysis
+   */
+  async provideClarification(
+    sessionId: string,
+    sectionType: string,
+    userResponse: string
+  ): Promise<ClarificationResponse> {
+    return this.request('/api/provide-clarification', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+        section_type: sectionType,
+        user_response: userResponse,
+      }),
+    });
+  }
+
+  /**
+   * Accept or reject changes for a section
+   */
+  async acceptChanges(
+    sessionId: string,
+    sectionType: string,
+    accepted: boolean
+  ): Promise<AcceptChangesResponse> {
+    return this.request('/api/accept-changes', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+        section_type: sectionType,
+        accepted: accepted,
+      }),
+    });
+  }
+
+  /**
+   * Generate the final resume based on user's accepted changes
+   */
+  async generateFinalResume(
+    sessionId: string
+  ): Promise<FinalResumeResponse> {
+    return this.request('/api/generate-final-resume', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+      }),
+    });
+  }
+
+  /**
+   * Get the current status of an analysis session
+   */
+  async getSessionStatus(
+    sessionId: string
+  ): Promise<SessionStatusResponse> {
+    return this.request(`/api/session-status/${sessionId}`);
+  }
+
+  /**
+   * Health check endpoint
+   */
+  async healthCheck(): Promise<HealthCheckResponse> {
+    return this.request('/api/health');
+  }
+
+  // Legacy support methods for backward compatibility
+  
+  /**
+   * Legacy method - redirects to new workflow
+   * @deprecated Use startAnalysis instead
+   */
   async analyzeResume(
     file: File,
     jobDescription: string,
     reviewMode: boolean = true
-  ): Promise<ResumeAnalysisResponse> {
-    return this.uploadFile('/api/analyze-resume', file, {
-      job_description: jobDescription,
-      review_mode: reviewMode,
-    });
+  ): Promise<any> {
+    console.warn('analyzeResume is deprecated. Use startAnalysis instead.');
+    return this.startAnalysis(file, jobDescription);
   }
 
-  async processClarification(
-    request: ClarificationRequest
-  ): Promise<ClarificationResponse> {
-    return this.request('/api/process-clarification', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-  }
-
-  async generateFinalResume(
-    request: FinalResumeRequest
-  ): Promise<FinalResumeResponse> {
-    return this.request('/api/generate-final-resume', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-  }
-
-  async getAnalysis(analysisId: string): Promise<ResumeAnalysisResponse> {
-    return this.request(`/api/analysis/${analysisId}`);
-  }
-
-  async healthCheck(): Promise<{
-    status: string;
-    version: string;
-    features: string[];
-    judgment_tracing: boolean;
-    openai_configured: boolean;
-    supported_formats: string[];
-  }> {
-    return this.request('/api/health');
+  /**
+   * Legacy method - use provideClarification instead
+   * @deprecated Use provideClarification instead
+   */
+  async processClarification(request: any): Promise<any> {
+    console.warn('processClarification is deprecated. Use provideClarification instead.');
+    return this.provideClarification(
+      request.session_id,
+      request.section_type,
+      request.user_response
+    );
   }
 }
 
 // Export singleton instance
-export const resumeCriticAPI = new ResumeCriticAPI(); 
+export const resumeWiseAPI = new ResumeWiseAPI();
+
+// Export legacy instance for backward compatibility
+export const resumeCriticAPI = resumeWiseAPI;
+
+// Export types for backward compatibility
+export type { 
+  AnalysisStartResponse as ResumeAnalysisResponse,
+  ClarificationSubmitRequest as LegacyClarificationRequest,
+  FinalResumeResponse as LegacyFinalResumeResponse,
+  SectionAnalysis as ResumeBullet,
+  SectionData as ResumeSection,
+  SessionStatusResponse as AnalysisSummary
+}; 
