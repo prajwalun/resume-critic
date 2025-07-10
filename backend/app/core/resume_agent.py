@@ -50,10 +50,11 @@ env_path = os.path.join(backend_dir, ".env")
 load_dotenv(dotenv_path=env_path)
 
 # Import clean logging
-from .logging_config import get_clean_logger
+from .logging_config import get_resume_logger, setup_professional_logging
 
-# Setup clean logger
-logger = get_clean_logger(__name__)
+# Setup professional logger
+setup_professional_logging("INFO")
+logger = get_resume_logger(__name__)
 
 class SectionType(Enum):
     """Enum for resume section types."""
@@ -341,74 +342,85 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         }
     
     async def start_analysis(self, resume_text: str, job_description: str) -> Dict[str, Any]:
-        """
-        Start iterative resume analysis session with human-in-the-loop workflow.
-        Now properly stops when clarification is needed instead of processing everything.
-        """
+        """Start comprehensive resume analysis with human-in-the-loop workflow."""
+        
         session_id = str(uuid4())
         
-        # Store original job description to prevent false positive clarification triggers
+        # Parse resume sections first
+        parsed_sections = await self._parse_resume_sections(resume_text)
+        logger.session_started(session_id, len(parsed_sections))
+        
+        # Store original job description for clarification context
         self.original_job_description = job_description
         
+        # Comprehensive job analysis
+        job_analysis = await self._analyze_job_description_comprehensive(job_description)
+        
+        # Initialize session with proper structure
+        session = {
+            "session_id": session_id,
+            "created_at": datetime.now().isoformat(),
+            "sections": parsed_sections,
+            "job_analysis": job_analysis,
+            "section_analyses": {},  # For storing completed analyses
+            "accepted_changes": {},  # For storing user decisions
+            "needs_clarification": False,
+            "pending_clarifications": {},  # Multiple clarifications support
+            "current_section_index": 0
+        }
+        self.sessions[session_id] = session
+        
         try:
-            # Parse resume sections
-            parsed_sections = await self._parse_resume_sections(resume_text)
-            if not parsed_sections:
-                return {"success": False, "error": "Failed to parse resume sections"}
-            
-            # Analyze job description  
-            job_analysis = await self._analyze_job_description_comprehensive(job_description)
-            
-            # Initialize session with pending analysis
-            self.sessions[session_id] = {
-                "resume_text": resume_text,
-                "job_description": job_description,
-                "sections": parsed_sections,
-                "job_analysis": job_analysis,
-                "section_analyses": {},
-                "accepted_changes": {},
-                "current_section_index": 0,  # Track progress
-                "needs_clarification": False,
-                "pending_clarification": None,
-                "created_at": datetime.now().isoformat()
-            }
-            
-            logger.info(f"Iterative analysis session {session_id[:8]} started - {len(parsed_sections)} sections identified")
-            
-            # HUMAN-IN-THE-LOOP: Process sections one by one, stopping for clarification
-            analysis_results = await self._process_sections_with_clarification_support(
-                session_id, 
-                parsed_sections, 
-                job_analysis
+            # Process all sections with clarification support
+            result = await self._process_sections_with_clarification_support(
+                session_id, parsed_sections, job_analysis
             )
             
-            return {
+            # Merge session data with result
+            result.update({
                 "success": True,
                 "session_id": session_id,
                 "sections": parsed_sections,
-                "job_analysis": job_analysis.__dict__,
                 "analysis_order": [section.value for section in self.analysis_order],
-                "section_analyses": analysis_results["completed_analyses"],
-                "needs_clarification": analysis_results["needs_clarification"],
-                "pending_clarifications": analysis_results.get("pending_clarifications", {}),
-                "sections_needing_clarification": analysis_results.get("sections_needing_clarification", []),
-                "current_section": analysis_results["current_section"],
-                "progress": analysis_results["progress"]
-            }
-            
-        except Exception as e:
-            logger.error(f"Error starting iterative analysis: {str(e)}")
-            
-            # Log analysis error
-            monitor.log_error("analysis_error", {
-                "session_id": session_id,
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "section_analyses": {
+                    key: {
+                        "section_type": analysis.section_type.value,
+                        "original_content": analysis.original_content,
+                        "improved_content": analysis.best_content,
+                        "score": analysis.final_score,  # Frontend expects "score", not "final_score"
+                        "feedback": analysis.improvement_journey,
+                        "needs_clarification": analysis.needs_clarification,
+                        "clarification_request": {
+                            "section_type": analysis.clarification_request.section_type.value,
+                            "question": analysis.clarification_request.question,
+                            "context": analysis.clarification_request.context,
+                            "reason": analysis.clarification_request.reason,
+                            "original_content": analysis.clarification_request.original_content
+                        } if analysis.clarification_request else None
+                    } for key, analysis in result.get("completed_analyses", {}).items()
+                },
+                "job_analysis": {
+                    "keywords": job_analysis.keywords,
+                    "requirements": job_analysis.requirements,
+                    "experience_level": job_analysis.experience_level,
+                    "key_technologies": job_analysis.key_technologies,
+                    "priorities": job_analysis.priorities,
+                    "soft_skills": job_analysis.soft_skills,
+                    "hard_skills": job_analysis.hard_skills,
+                    "industry": job_analysis.industry,
+                    "company_size": job_analysis.company_size,
+                    "role_type": job_analysis.role_type
+                }
             })
             
+            return result
+            
+        except Exception as e:
+            logger.error_occurred(session_id, "analysis", str(e))
             return {
                 "success": False,
-                "error": str(e)
+                "error": f"Analysis failed: {str(e)}",
+                "session_id": session_id
             }
     
     async def _process_sections_with_clarification_support(
@@ -432,7 +444,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
             session["current_section_index"] = i
             
             if section_key in parsed_sections and parsed_sections[section_key]["content"].strip():
-                logger.info(f"Processing {section_key} section (step {i+1}/{len(self.analysis_order)})")
+                logger.analysis_progress(session_id, section_key, "analyzing")
                 
                 try:
                     analysis = await self._iterative_section_improvement(
@@ -441,12 +453,12 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                         job_analysis,
                         parsed_sections
                     )
-                
+            
                     # Check if this section needs clarification (but DON'T stop!)
                     if analysis.needs_clarification and analysis.clarification_request:
-                        logger.warning(f"Clarification needed for {section_key} - continuing with other sections")
+                        logger.clarification_requested(session_id, section_key)
                         
-                        # Store clarification request for this section
+                        # Store clarification for later
                         pending_clarifications[section_key] = {
                             "section_type": section_key,
                             "question": analysis.clarification_request.question,
@@ -455,69 +467,16 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                             "original_content": analysis.clarification_request.original_content
                         }
                         sections_needing_clarification.append(section_key)
-                        
-                        # CRITICAL FIX: Store analysis in BOTH places to ensure it appears in final resume
-                        session["section_analyses"][section_key] = analysis  # Store SectionAnalysis object
-                        completed_analyses[section_key] = {  # Store dict representation for API
-                            "section_type": analysis.section_type.value,
-                            "original_content": analysis.original_content,
-                            "improved_content": analysis.best_content,  # Safe improvements only
-                            "score": analysis.final_score,
-                            "feedback": analysis.improvement_journey,
-                            "iteration_count": len(analysis.iterations),
-                            "needs_clarification": True,
-                            "clarification_request": {
-                                "question": analysis.clarification_request.question,
-                                "context": analysis.clarification_request.context,
-                                "reason": analysis.clarification_request.reason
-                            }
-                        }
-                        
-                        # Log clarification request
-                        monitor.log_user_clarification(section_key, analysis.clarification_request.question)
-                    
                     else:
-                        # No clarification needed, save analysis and continue
-                        session["section_analyses"][section_key] = analysis
-                        completed_analyses[section_key] = {
-                            "section_type": analysis.section_type.value,
-                            "original_content": analysis.original_content,
-                            "improved_content": analysis.best_content,
-                            "score": analysis.final_score,
-                            "feedback": analysis.improvement_journey,
-                            "iteration_count": len(analysis.iterations),
-                            "needs_clarification": False,
-                            "clarification_request": None
-                        }
-                        
-                        logger.info(f"Completed {section_key}: {len(analysis.iterations)} iterations, score: {analysis.final_score}")
-            
-                except Exception as e:
-                    logger.error(f"Error processing {section_key}: {str(e)}")
-                    # Create fallback analysis and continue - ENSURE both storages are updated
-                    fallback_analysis = SectionAnalysis(
-                        section_type=section_type,
-                        original_content=parsed_sections[section_key]["content"],
-                        best_content=parsed_sections[section_key]["content"],  # Use original as fallback
-                        iterations=[],
-                        final_score=50,
-                        improvement_journey=f"Analysis temporarily unavailable: {str(e)}",
-                        needs_clarification=False,
-                        clarification_request=None
-                    )
+                        logger.analysis_progress(session_id, section_key, "completed")
                     
-                    # Store in BOTH places
-                    session["section_analyses"][section_key] = fallback_analysis
-                    completed_analyses[section_key] = {
-                        "section_type": section_type.value,
-                        "original_content": parsed_sections[section_key]["content"],
-                        "improved_content": parsed_sections[section_key]["content"],  # Use original as fallback
-                        "score": 50,
-                        "feedback": f"Analysis temporarily unavailable: {str(e)}",
-                        "iteration_count": 0,
-                        "needs_clarification": False,
-                        "clarification_request": None
-                    }
+                    # ALWAYS store in both places for final resume generation
+                    session["section_analyses"][section_key] = analysis
+                    completed_analyses[section_key] = analysis
+                
+                except Exception as e:
+                    logger.error_occurred(session_id, f"{section_key}_analysis", str(e))
+                    continue
         
         # Update session state
         has_clarifications = len(pending_clarifications) > 0
@@ -526,12 +485,13 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         session["current_section_index"] = len(self.analysis_order)  # Mark as completed
         
         if has_clarifications:
-            logger.info(f"Analysis completed - {len(sections_needing_clarification)} sections need clarification: {', '.join(sections_needing_clarification)}")
-            progress_msg = f"Analysis complete - {len(sections_needing_clarification)} section(s) need clarification"
+            clarification_count = len(sections_needing_clarification)
+            logger.info(f"Analysis completed - {clarification_count} section(s) need clarification")
+            progress_msg = f"Analysis complete - {clarification_count} section(s) need clarification"
         else:
             logger.info("Analysis completed - no clarifications needed")
-            progress_msg = f"{len(self.analysis_order)}/{len(self.analysis_order)} - All sections completed"
-            
+            progress_msg = "Analysis complete - ready for final resume generation"
+        
         return {
             "completed_analyses": completed_analyses,
             "needs_clarification": has_clarifications,
@@ -586,8 +546,8 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
             logger.info(f"Fabrication analysis for {section_type.value}: {len(critical_risks)} critical, {len(manageable_risks)} manageable, {len(safe_enhancements)} safe")
             
             # ENHANCED CLARIFICATION TRIGGER: Check if clarification is needed
-            # Simply check if we have high-risk fabrication items
-            fabrication_detected = len(critical_risks) > 0
+            # RELAXED: Only trigger if we have MULTIPLE high-risk fabrication items
+            fabrication_detected = len(critical_risks) >= 2  # Require 2+ critical risks to trigger clarification
             
             # TRIGGER CLARIFICATION: If fabrication risks detected
             if fabrication_detected:
@@ -1617,13 +1577,20 @@ JOB DESCRIPTION REQUIREMENTS:
 {job_description}
 
 FABRICATION DETECTION PRIORITIES:
-1. CRITICAL FABRICATION RISKS (ALWAYS requires clarification):
-   - Any percentage claims not in original (e.g., "50% increase", "30% improvement")
-   - Specific numeric achievements not mentioned (e.g., "reduced latency by 10%")
-   - Impact metrics not provided by user (e.g., "increased efficiency", "improved performance")
-   - Technologies/skills completely absent from original content
-   - Projects, roles, or experiences not mentioned
-   - Specific company achievements or business outcomes not stated
+1. CRITICAL FABRICATION RISKS (requires clarification):
+   - SPECIFIC percentage claims not in original (e.g., "50% increase", "30% improvement")
+   - SPECIFIC numeric achievements not mentioned (e.g., "reduced latency by 10ms")
+   - QUANTIFIED impact metrics not provided by user (e.g., "increased efficiency by 25%")
+   - COMPLETELY NEW technologies/skills absent from original content 
+   - ENTIRELY NEW projects, roles, or experiences not mentioned
+   - SPECIFIC company achievements or business metrics not stated
+
+   HOWEVER, ALLOW these enhancements without clarification:
+   - Professional rephrasing of existing content
+   - Adding context that doesn't claim specific metrics
+   - Formatting improvements and better organization
+   - Industry-standard terminology for existing technologies
+   - General improvements like "enhanced performance" without specific numbers
 
 2. SAFE IMPROVEMENTS (always allowed):
    - Formatting and organization improvements
@@ -1751,14 +1718,15 @@ BE EXTREMELY CONSERVATIVE about metrics and achievements. When in doubt, ask for
                     "action": "remove_fabricated_content"
                 })
             
-            # Check for added responsibilities not mentioned in original
+            # Check for COMPLETELY fabricated responsibilities (relaxed check)
             fabricated_responsibilities = self._detect_fabricated_responsibilities(original_content, suggested_content)
-            if fabricated_responsibilities:
+            # Only flag if there are many new responsibilities (3+) - allow enhancement of existing ones
+            if len(fabricated_responsibilities) >= 3:
                 verification_issues.append({
-                    "severity": "high",
-                    "issue": "fabricated_responsibilities",
-                    "description": f"Suggestion adds responsibilities not in original: {fabricated_responsibilities}",
-                    "action": "request_user_confirmation"
+                    "severity": "medium",  # Downgraded from "high" to allow processing
+                    "issue": "many_new_responsibilities",
+                    "description": f"Suggestion adds many new responsibilities: {fabricated_responsibilities[:2]}...",
+                    "action": "verify_user_confirmation"
                 })
         
         # Education section specific checks  
@@ -1794,10 +1762,20 @@ BE EXTREMELY CONSERVATIVE about metrics and achievements. When in doubt, ask for
                     "action": "remove_fabricated_content"
                 })
         
-        # General fabrication check
+        # General fabrication check - RELAXED THRESHOLDS
         original_length = len(original_content.split())
         suggested_length = len(suggested_content.split())
-        if suggested_length > original_length * 1.5:  # 50% increase threshold
+        
+        # More permissive length check - allow 3x expansion for legitimate improvements
+        if suggested_length > original_length * 3.0:  # 300% increase threshold
+            verification_issues.append({
+                "severity": "medium",
+                "issue": "excessive_content_addition",
+                "description": f"Suggestion is {((suggested_length/original_length-1)*100):.0f}% longer than original",
+                "action": "verify_additions"
+            })
+        # For very short original content, be even more permissive
+        elif original_length < 20 and suggested_length > original_length * 5.0:  # 500% for short content
             verification_issues.append({
                 "severity": "medium",
                 "issue": "excessive_content_addition",
@@ -1873,16 +1851,22 @@ BE EXTREMELY CONSERVATIVE about metrics and achievements. When in doubt, ask for
         original_bullets = [line.strip() for line in original_content.split('\n') if line.strip().startswith(('•', '-', '*'))]
         suggested_bullets = [line.strip() for line in suggested_content.split('\n') if line.strip().startswith(('•', '-', '*'))]
         
-        # Find responsibilities that are completely new
+        # Find responsibilities that are completely new - RELAXED CHECK
         fabricated_responsibilities = []
         for suggested_bullet in suggested_bullets:
             # Check if this responsibility has any similarity to original content
-            if not any(self._calculate_bullet_similarity(suggested_bullet, original_bullet) > 0.6 
-                      for original_bullet in original_bullets):
+            # RELAXED: Lower similarity threshold from 0.6 to 0.3 to allow more enhancement
+            # RELAXED: Also check similarity against full original content, not just bullets
+            has_bullet_similarity = any(self._calculate_bullet_similarity(suggested_bullet, original_bullet) > 0.3 
+                                      for original_bullet in original_bullets)
+            has_content_similarity = self._calculate_content_similarity(suggested_bullet, original_content) > 0.2
+            
+            # Only flag if completely unrelated to original content
+            if not has_bullet_similarity and not has_content_similarity:
                 # This might be a completely fabricated responsibility
                 fabricated_responsibilities.append(suggested_bullet[:100] + "..." if len(suggested_bullet) > 100 else suggested_bullet)
         
-        return fabricated_responsibilities[:3]  # Limit to prevent overwhelming output
+        return fabricated_responsibilities[:5]  # Allow more before flagging
     
     def _detect_fabricated_project_details(self, original_content: str, suggested_content: str) -> list:
         """Detect fabricated project details and technologies."""
@@ -2003,14 +1987,19 @@ BE EXTREMELY CONSERVATIVE about metrics and achievements. When in doubt, ask for
                 changes_detected["change_types"].append("formatting")
                 changes_detected["specific_changes"].append("Applied professional formatting standards")
             
-            # Check for content additions (should be minimal)
-            original_words = set(original_normalized.split())
-            improved_words = set(improved_normalized.split())
-            new_words = improved_words - original_words
-            
-            if len(new_words) > 3:  # More than 3 new words might indicate fabrication
-                changes_detected["change_types"].append("content_addition")
-                changes_detected["specific_changes"].append(f"Added content: {', '.join(list(new_words)[:5])}")
+            # Check for meaningful content additions
+            if len(improved_content) > len(original_content) * 1.3:  # 30% length increase
+                changes_detected["change_types"].append("content_enhancement")
+                # Focus on improvement types rather than specific garbled words
+                if "**" in improved_content and "**" not in original_content:
+                    changes_detected["specific_changes"].append("Enhanced with bold formatting for emphasis")
+                if improved_content.count('\n') > original_content.count('\n'):
+                    changes_detected["specific_changes"].append("Improved content organization with better structure")
+                if any(word in improved_content.lower() for word in ['developed', 'implemented', 'designed', 'created']) and \
+                   not any(word in original_content.lower() for word in ['developed', 'implemented', 'designed', 'created']):
+                    changes_detected["specific_changes"].append("Enhanced with professional action verbs")
+                else:
+                    changes_detected["specific_changes"].append("Enhanced content with professional improvements")
         
         return changes_detected
     
@@ -2271,33 +2260,34 @@ Return ONLY a valid JSON object with these exact keys:
         job_description: str,
         user_baseline: Optional[str] = None
     ) -> SectionAnalysis:
-        """Analyze a specific section."""
-        if session_id not in self.sessions:
-            return {"success": False, "error": "Session not found"}
-        
-        session = self.sessions[session_id]
-        section_analysis = session.get("section_analyses", {}).get(section_type)
-        
-        if not section_analysis:
-            return {"success": False, "error": f"No analysis found for section {section_type}"}
+        """Analyze a specific section standalone."""
+        try:
+            # Create a temporary job analysis
+            job_analysis = await self._analyze_job_description_comprehensive(job_description)
             
-            return {
-            "success": True,
-            "analysis": {
-                "section_type": section_analysis.section_type.value,
-                "original_content": section_analysis.original_content,
-                "improved_content": section_analysis.best_content,
-                "score": section_analysis.final_score,
-                "feedback": section_analysis.improvement_journey,
-                "iteration_count": len(section_analysis.iterations),
-                "needs_clarification": section_analysis.needs_clarification,
-                "clarification_request": {
-                    "question": section_analysis.clarification_request.question,
-                    "context": section_analysis.clarification_request.context,
-                    "reason": section_analysis.clarification_request.reason
-                } if section_analysis.clarification_request else None
-            }
-        }
+            # Run section analysis
+            analysis = await self._iterative_section_improvement(
+                content,
+                section_type,
+                job_analysis,
+                {}  # Empty sections dict for standalone analysis
+            )
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error in standalone section analysis: {str(e)}")
+            # Return a basic SectionAnalysis object on error
+            return SectionAnalysis(
+                section_type=section_type,
+                original_content=content,
+                best_content=content,
+                iterations=[],
+                final_score=50,
+                improvement_journey=f"Error during analysis: {str(e)}",
+                needs_clarification=False,
+                clarification_request=None
+            )
 
     def get_session_status(self, session_id: str) -> Dict[str, Any]:
         """Get session status."""
@@ -2330,8 +2320,7 @@ Return ONLY a valid JSON object with these exact keys:
         if section_type not in pending_clarifications:
             return {"success": False, "error": f"No pending clarification for section {section_type}"}
         
-        logger.info(f"Processing clarification for {section_type} in session {session_id[:8]}")
-        logger.info(f"User provided: {user_response[:100]}...")
+        logger.debug(f"Processing clarification for {section_type} in session {session_id[:8]}")
         
         try:
             # Get the original content and job analysis
@@ -2375,7 +2364,7 @@ ADDITIONAL CONTEXT PROVIDED BY USER:
             # Update session state - only mark as no clarification if no more pending
             session["needs_clarification"] = len(pending_clarifications) > 0
             
-                        # Log successful clarification
+            # Log successful clarification
             monitor.log_agent_action("clarification_processed", {
                 "session_id": session_id,
                 "section_type": section_type,
@@ -2383,7 +2372,7 @@ ADDITIONAL CONTEXT PROVIDED BY USER:
                 "final_score": analysis.final_score,
                 "remaining_clarifications": len(pending_clarifications)
             })
-            
+        
             return {
                 "success": True,
                 "analysis": {
@@ -2751,12 +2740,27 @@ ADDITIONAL CONTEXT PROVIDED BY USER:
         logger.info(f"Final resume length: {len(final_resume)}")
         logger.info(f"Final resume preview: {final_resume[:200]}...")
         
+        # JUDGMENT INTEGRATION: Log session completion with comprehensive metrics
+        try:
+            session_metrics = monitor.log_session_completion(session_id, session)
+            
+            # Evaluate final resume quality using judgment framework
+            evaluator.evaluate_final_resume_quality(
+                original_resume=session.get("resume_text", ""),
+                final_resume=final_resume,
+                job_description=session.get("job_description", ""),
+                user_decisions=accepted_changes,
+                session_metrics=session_metrics
+            )
+        except Exception as e:
+            logger.warning(f"Judgment session evaluation error (non-critical): {str(e)}")
+        
         return {
             "success": True,
             "final_resume": final_resume,
             "sections": list(section_analyses.keys()),
             "session_id": session_id
-        } 
+        }
 
     async def _generate_content_with_clarification(
         self,
@@ -2896,4 +2900,4 @@ OUTPUT: Return ONLY the enhanced {section_type.value} content. No explanations.
         return {
             "success": False, 
             "error": f"Section {section_type} not yet reached in analysis pipeline"
-        }
+        } 

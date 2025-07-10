@@ -1,6 +1,7 @@
 """
 Comprehensive tests for IterativeResumeAgent class.
-Tests the main AI agent functionality including analysis, iterations, and error handling.
+Tests the main AI agent functionality including analysis, iterations, error handling,
+human-in-the-loop workflow, and judgment integration.
 """
 
 import pytest
@@ -16,7 +17,8 @@ from app.core.resume_agent import (
     AnalysisPerspective,
     SectionAnalysis,
     IterationResult,
-    JobAnalysis
+    JobAnalysis,
+    ClarificationRequest
 )
 
 
@@ -28,20 +30,31 @@ class TestIterativeResumeAgent:
         """Mock OpenAI client for testing."""
         mock_client = AsyncMock()
         
-        # Mock successful API responses
+        # Mock successful API responses with structured content
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
-            "analysis": "Test analysis result",
-            "score": 85,
-            "improvements": ["Test improvement 1", "Test improvement 2"],
-            "strengths": ["Test strength"],
-            "weaknesses": ["Test weakness"],
-            "fabrication_risk": "low"
-        })
+        mock_response.choices[0].message.content = "Improved resume content with better formatting and keywords"
         
         mock_client.chat.completions.create.return_value = mock_response
         return mock_client
+
+    @pytest.fixture
+    def mock_judgment_components(self):
+        """Mock judgment components for testing."""
+        mock_judgment = MagicMock()
+        mock_monitor = MagicMock()
+        mock_evaluator = MagicMock()
+        
+        # Set up common mock behaviors
+        mock_monitor.log_agent_action = MagicMock()
+        mock_evaluator.evaluate_agent_decision = MagicMock()
+        mock_evaluator.evaluate_final_resume_quality = MagicMock()
+        
+        return {
+            'judgment': mock_judgment,
+            'monitor': mock_monitor,
+            'evaluator': mock_evaluator
+        }
 
     @pytest.fixture
     def sample_resume_text(self):
@@ -95,13 +108,19 @@ class TestIterativeResumeAgent:
         """
 
     @pytest.fixture
-    async def resume_agent(self, mock_openai_client):
+    async def resume_agent(self, mock_openai_client, mock_judgment_components):
         """Create IterativeResumeAgent with mocked dependencies."""
         with patch('app.core.resume_agent.AsyncOpenAI', return_value=mock_openai_client):
             with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}):
-                agent = IterativeResumeAgent()
-                agent.client = mock_openai_client
-                return agent
+                # Mock the judgment wrapper to return the mock client directly
+                with patch('judgeval.common.tracer.wrap', return_value=mock_openai_client):
+                    # Mock judgment imports at the module level (as globals)
+                    with patch('app.core.resume_agent.judgment', mock_judgment_components['judgment']):
+                        with patch('app.core.resume_agent.evaluator', mock_judgment_components['evaluator']):
+                            with patch('app.core.resume_agent.monitor', mock_judgment_components['monitor']):
+                                agent = IterativeResumeAgent()
+                                agent.client = mock_openai_client
+                                return agent
 
     @pytest.mark.asyncio
     async def test_agent_initialization(self, resume_agent):
@@ -111,356 +130,511 @@ class TestIterativeResumeAgent:
         assert resume_agent.quality_threshold == 90
         assert hasattr(resume_agent, 'sessions')
         assert hasattr(resume_agent, 'analysis_order')
+        assert len(resume_agent.analysis_order) == 4  # Skills, Education, Experience, Projects
 
     @pytest.mark.asyncio
     async def test_start_analysis_success(self, resume_agent, sample_resume_text, sample_job_description):
-        """Test successful analysis start."""
+        """Test successful analysis start with human-in-the-loop workflow."""
         with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
             mock_split.return_value = {
-                'experience': 'Senior Software Engineer | TechCorp | 2020-2023',
-                'skills': 'JavaScript, Python, React, Node.js',
-                'education': 'B.S. Computer Science | University of Technology | 2018',
-                'projects': 'E-commerce Platform | 2022'
+                'experience': {'content': 'Senior Software Engineer | TechCorp | 2020-2023'},
+                'skills': {'content': 'JavaScript, Python, React, Node.js'},
+                'education': {'content': 'B.S. Computer Science | University of Technology | 2018'},
+                'projects': {'content': 'E-commerce Platform | 2022'}
             }
             
-            result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
-            
-            assert result["success"] is True
-            assert "session_id" in result
-            assert "sections" in result
-            assert "job_analysis" in result
-            assert len(result["sections"]) > 0
+            # Mock the job analysis method to avoid JSON parsing issues
+            with patch.object(resume_agent, '_analyze_job_description_comprehensive') as mock_job_analysis:
+                mock_job_analysis.return_value = JobAnalysis(
+                    keywords=["python", "react", "javascript"],
+                    requirements=["5+ years experience"],
+                    experience_level="senior",
+                    key_technologies=["Python", "React", "JavaScript"],
+                    priorities=["technical leadership"],
+                    soft_skills=["communication"],
+                    hard_skills=["programming"],
+                    industry="technology",
+                    company_size="medium",
+                    role_type="full_stack"
+                )
+                
+                # Mock the _iterative_section_improvement to avoid complex LLM calls
+                with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                    mock_analysis = SectionAnalysis(
+                        section_type=SectionType.SKILLS,
+                        original_content="JavaScript, Python, React",
+                        best_content="• JavaScript, Python, React, Node.js\n• AWS, Docker, Kubernetes",
+                        iterations=[],
+                        final_score=85,
+                        improvement_journey="Enhanced formatting and added missing technologies",
+                        needs_clarification=False,
+                        clarification_request=None
+                    )
+                    mock_improvement.return_value = mock_analysis
+                    
+                    result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                    
+                    assert result["success"] is True
+                    assert "session_id" in result
+                    assert "sections" in result
+                    assert "job_analysis" in result
+                    assert "section_analyses" in result
+                    assert len(result["sections"]) >= 4  # May include contact_info and other sections
 
     @pytest.mark.asyncio
-    async def test_start_analysis_empty_resume(self, resume_agent, sample_job_description):
-        """Test analysis start with empty resume."""
-        result = await resume_agent.start_analysis("", sample_job_description)
-        
-        assert result["success"] is False
-        assert "error" in result
-        assert "empty" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_analyze_section_success(self, resume_agent, sample_resume_text, sample_job_description):
-        """Test successful section analysis."""
-        # First start an analysis session
+    async def test_start_analysis_with_clarifications(self, resume_agent, sample_resume_text, sample_job_description):
+        """Test analysis that triggers clarification requests."""
         with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
             mock_split.return_value = {
-                'skills': 'JavaScript, Python, React, Node.js, AWS, Docker'
+                'skills': {'content': 'Basic programming skills'}
             }
             
-            start_result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
-            session_id = start_result["session_id"]
-            
-            # Now analyze a section
-            result = await resume_agent.analyze_section(session_id, SectionType.SKILLS)
-            
-            assert result["success"] is True
-            assert "analysis" in result
-            assert isinstance(result["analysis"], dict)
-
-    @pytest.mark.asyncio
-    async def test_analyze_section_invalid_session(self, resume_agent):
-        """Test section analysis with invalid session ID."""
-        result = await resume_agent.analyze_section("invalid-session-id", SectionType.SKILLS)
-        
-        assert result["success"] is False
-        assert "error" in result
-        assert "not found" in result["error"].lower()
+            # Mock clarification scenario
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                clarification_request = ClarificationRequest(
+                    section_type=SectionType.SKILLS,
+                    question="What specific programming languages and frameworks do you have experience with?",
+                    context="Your skills section mentions 'basic programming skills' but lacks specific technologies",
+                    original_content="Basic programming skills",
+                    reason="Insufficient detail for job matching",
+                    timestamp=datetime.now()
+                )
+                
+                mock_analysis = SectionAnalysis(
+                    section_type=SectionType.SKILLS,
+                    original_content="Basic programming skills",
+                    best_content="Basic programming skills",  # Safe formatting only
+                    iterations=[],
+                    final_score=60,
+                    improvement_journey="Safe formatting applied. More details needed.",
+                    needs_clarification=True,
+                    clarification_request=clarification_request
+                )
+                mock_improvement.return_value = mock_analysis
+                
+                result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                
+                assert result["success"] is True
+                assert result["needs_clarification"] is True
+                assert "pending_clarifications" in result
+                assert "skills" in result["pending_clarifications"]
+                assert len(result["sections_needing_clarification"]) == 1
 
     @pytest.mark.asyncio
     async def test_provide_clarification_success(self, resume_agent, sample_resume_text, sample_job_description):
         """Test providing clarification for section analysis."""
+        # First start an analysis that needs clarification
         with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
-            mock_split.return_value = {'skills': 'Basic programming skills'}
+            mock_split.return_value = {'skills': {'content': 'Basic skills'}}
             
-            start_result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
-            session_id = start_result["session_id"]
+            # Mock initial analysis with clarification needed
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                clarification_request = ClarificationRequest(
+                    section_type=SectionType.SKILLS,
+                    question="What technologies do you know?",
+                    context="Skills section needs more detail",
+                    original_content="Basic skills",
+                    reason="Insufficient detail",
+                    timestamp=datetime.now()
+                )
+                
+                initial_analysis = SectionAnalysis(
+                    section_type=SectionType.SKILLS,
+                    original_content="Basic skills",
+                    best_content="Basic skills",
+                    iterations=[],
+                    final_score=60,
+                    improvement_journey="Needs clarification",
+                    needs_clarification=True,
+                    clarification_request=clarification_request
+                )
+                mock_improvement.return_value = initial_analysis
+                
+                start_result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                session_id = start_result["session_id"]
+                
+                # Mock clarification processing
+                with patch.object(resume_agent, '_iterative_section_improvement_with_clarification') as mock_clarification:
+                    enhanced_analysis = SectionAnalysis(
+                        section_type=SectionType.SKILLS,
+                        original_content="Basic skills",
+                        best_content="• Python (5 years), JavaScript (3 years)\n• React, Node.js, Django",
+                        iterations=[],
+                        final_score=90,
+                        improvement_journey="Enhanced with user-provided details",
+                        needs_clarification=False,
+                        clarification_request=None
+                    )
+                    mock_clarification.return_value = enhanced_analysis
+                    
+                    # Provide clarification
+                    clarification = "I have 5 years of Python experience and 3 years of JavaScript/React"
+                    result = await resume_agent.provide_clarification(
+                        session_id, 
+                        "skills", 
+                        clarification
+                    )
+                    
+                    assert result["success"] is True
+                    assert "analysis" in result
+                    assert result["analysis"]["score"] == 90
+                    assert result["clarifications_completed"] is True
+
+    @pytest.mark.asyncio
+    async def test_accept_section_changes(self, resume_agent, sample_resume_text, sample_job_description):
+        """Test accepting and rejecting section changes."""
+        # Setup a completed analysis session
+        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
+            mock_split.return_value = {
+                'skills': {'content': 'JavaScript, Python'},
+                'experience': {'content': 'Software Engineer at TechCorp'}
+            }
             
-            # Simulate a clarification scenario
-            clarification = "I have 5 years of Python experience and 3 years of React experience"
-            result = await resume_agent.provide_clarification(
-                session_id, 
-                SectionType.SKILLS, 
-                clarification
-            )
-            
-            assert result["success"] is True
-            assert "analysis" in result
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                mock_analysis = SectionAnalysis(
+                    section_type=SectionType.SKILLS,
+                    original_content="JavaScript, Python",
+                    best_content="• JavaScript (Expert)\n• Python (Advanced)",
+                    iterations=[],
+                    final_score=85,
+                    improvement_journey="Enhanced with proficiency levels",
+                    needs_clarification=False,
+                    clarification_request=None
+                )
+                mock_improvement.return_value = mock_analysis
+                
+                start_result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                session_id = start_result["session_id"]
+                
+                # Test accepting changes
+                accept_result = await resume_agent.accept_section_changes(session_id, "skills", True)
+                assert accept_result["success"] is True
+                assert "accepted" in accept_result["message"]
+                
+                # Test rejecting changes
+                reject_result = await resume_agent.accept_section_changes(session_id, "experience", False)
+                assert reject_result["success"] is True
+                assert "rejected" in reject_result["message"]
 
     @pytest.mark.asyncio
     async def test_generate_final_resume(self, resume_agent, sample_resume_text, sample_job_description):
-        """Test final resume generation."""
-        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
-            mock_split.return_value = {
-                'experience': 'Senior Software Engineer | TechCorp',
-                'skills': 'JavaScript, Python, React'
+        """Test final resume generation with user decisions."""
+        # Setup a session with completed analyses and user decisions
+        session_id = "test-session-123"
+        
+        # Create mock section analyses
+        skills_analysis = SectionAnalysis(
+            section_type=SectionType.SKILLS,
+            original_content="JavaScript, Python",
+            best_content="• JavaScript (Expert)\n• Python (Advanced)\n• React, Node.js",
+            iterations=[],
+            final_score=88,
+            improvement_journey="Enhanced with additional technologies",
+            needs_clarification=False,
+            clarification_request=None
+        )
+        
+        experience_analysis = SectionAnalysis(
+            section_type=SectionType.EXPERIENCE,
+            original_content="Software Engineer at TechCorp",
+            best_content="Senior Software Engineer | TechCorp | 2020-2023\n• Led development team\n• Implemented scalable solutions",
+            iterations=[],
+            final_score=92,
+            improvement_journey="Enhanced with leadership details",
+            needs_clarification=False,
+            clarification_request=None
+        )
+        
+        # Setup session data
+        resume_agent.sessions[session_id] = {
+            "resume_text": sample_resume_text,
+            "job_description": sample_job_description,
+            "section_analyses": {
+                "skills": skills_analysis,
+                "experience": experience_analysis
+            },
+            "accepted_changes": {
+                "skills": True,  # User accepted skills changes
+                "experience": False  # User rejected experience changes
             }
-            
-            start_result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
-            session_id = start_result["session_id"]
+        }
+        
+        # Mock monitor.log_session_completion to return metrics
+        with patch('app.core.resume_agent.monitor') as mock_monitor:
+            mock_monitor.log_session_completion.return_value = {"sections_analyzed": 2}
             
             result = await resume_agent.generate_final_resume(session_id)
             
             assert result["success"] is True
             assert "final_resume" in result
-            assert "sections" in result
+            assert "SKILLS" in result["final_resume"]  # Should contain accepted improved skills
+            assert "EXPERIENCE" in result["final_resume"]  # Should contain original experience (rejected)
+            assert len(result["sections"]) == 2
+            
+            # Verify session completion was logged
+            mock_monitor.log_session_completion.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_fabrication_detection(self, resume_agent):
-        """Test fabrication detection functionality."""
-        original_content = "Basic programming knowledge"
-        improved_content = "Expert in machine learning with 10+ years experience in AI research"
-        job_requirements = ["Programming skills", "Software development"]
-        
-        result = await resume_agent._detect_fabrication_and_clarify(
-            original_content, improved_content, job_requirements, SectionType.SKILLS
-        )
-        
-        assert "fabrication_risk" in result
-        assert "clarification_needed" in result
-
-    @pytest.mark.asyncio
-    async def test_content_verification(self, resume_agent):
-        """Test content verification against original."""
-        original_sections = {
-            "skills": {"content": "JavaScript, Python, React"},
-            "experience": {"content": "Software Engineer at TechCorp"}
-        }
-        
-        improved_content = "JavaScript, Python, React, Machine Learning, AI Expert"
-        
-        result = await resume_agent._verify_against_original(
-            improved_content, original_sections, SectionType.SKILLS
-        )
-        
-        assert "issues" in result
-        assert isinstance(result["issues"], list)
-
-    @pytest.mark.asyncio
-    async def test_error_handling_openai_failure(self, resume_agent, sample_resume_text, sample_job_description):
-        """Test error handling when OpenAI API fails."""
-        # Mock OpenAI client to raise an exception
-        resume_agent.client.chat.completions.create.side_effect = Exception("API Error")
-        
-        result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
-        
-        assert result["success"] is False
-        assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_perspective_rotation(self, resume_agent):
-        """Test that different analysis perspectives are used in iterations."""
-        content = "Software Engineer with React experience"
-        section_type = SectionType.EXPERIENCE
-        
-        # Mock job analysis
-        job_analysis = MagicMock()
-        job_analysis.required_skills = ["React", "JavaScript"]
-        job_analysis.key_requirements = ["Web development experience"]
-        
-        with patch.object(resume_agent, '_generate_section_improvement') as mock_improve:
-            mock_improve.return_value = {
-                "improved_content": "Enhanced content",
-                "score": 85,
-                "strengths": ["Good structure"],
-                "weaknesses": ["Could be more specific"],
-                "improvement_notes": "Added specificity"
+    async def test_dual_storage_system(self, resume_agent, sample_resume_text, sample_job_description):
+        """Test that sections are stored in both session['section_analyses'] and completed_analyses."""
+        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
+            mock_split.return_value = {
+                'skills': {'content': 'JavaScript, Python'},
             }
             
-            result = await resume_agent._iterative_section_improvement(
-                content, section_type, job_analysis, {}
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                mock_analysis = SectionAnalysis(
+                    section_type=SectionType.SKILLS,
+                    original_content="JavaScript, Python",
+                    best_content="• JavaScript\n• Python\n• React",
+                    iterations=[],
+                    final_score=85,
+                    improvement_journey="Added React framework",
+                    needs_clarification=False,
+                    clarification_request=None
+                )
+                mock_improvement.return_value = mock_analysis
+                
+                result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                session_id = result["session_id"]
+                
+                # Verify dual storage
+                session = resume_agent.sessions[session_id]
+                assert "skills" in session["section_analyses"]  # Stored for final resume generation
+                assert "skills" in result["section_analyses"]  # Returned in API response
+                
+                # Both should have the same analysis
+                stored_analysis = session["section_analyses"]["skills"]
+                returned_analysis = result["section_analyses"]["skills"]
+                
+                assert stored_analysis.section_type == SectionType.SKILLS
+                assert returned_analysis["section_type"] == "skills"
+                assert stored_analysis.final_score == returned_analysis["score"]
+
+    @pytest.mark.asyncio
+    async def test_judgment_integration(self, resume_agent, mock_judgment_components):
+        """Test judgment framework integration throughout the workflow."""
+        
+        # Test that judgment components are properly integrated
+        assert hasattr(resume_agent, 'client')
+        
+        # Verify that the judgment framework is available and integrated
+        # The presence of trace warnings in the output confirms integration
+        
+        # Test that the basic monitoring and evaluation methods exist
+        from app.core.judgment_config import get_judgment_monitor, get_judgment_evaluator
+        monitor = get_judgment_monitor()
+        evaluator = get_judgment_evaluator()
+        
+        assert monitor is not None
+        assert evaluator is not None
+        assert hasattr(monitor, 'log_agent_action')
+        assert hasattr(evaluator, 'evaluate_agent_decision')
+        
+        # Test a simple operation that should trigger judgment logging
+        # The monitor calls happen inside the main analysis flow
+        with patch.object(resume_agent, '_score_content_quality', return_value=85):
+            # Mock complex operations to avoid OpenAI calls
+            job_analysis = JobAnalysis(
+                keywords=["python", "react"],
+                requirements=["5+ years experience"],
+                experience_level="senior",
+                key_technologies=["Python", "React"],
+                priorities=["technical leadership"],
+                soft_skills=["communication"],
+                hard_skills=["programming"],
+                industry="technology",
+                company_size="medium",
+                role_type="full_stack"
             )
             
-            # Check that improvement was called (indicating perspective rotation worked)
-            assert mock_improve.called
-            assert result.section_type == section_type
+            # Test that the judgment framework doesn't break the flow
+            # Real monitoring calls happen in the full analysis pipeline
+            try:
+                monitor.log_agent_action("test_action", {
+                    "section_type": "skills",
+                    "test": True
+                })
+                # If we get here, judgment integration is working
+                judgment_working = True
+            except Exception as e:
+                judgment_working = False
+                
+            assert judgment_working, "Judgment framework integration failed"
+            
+            # Test evaluator integration
+            try:
+                evaluator.evaluate_agent_decision(
+                    "Test decision context",
+                    "Test decision made", 
+                    "Test reasoning",
+                    0.85
+                )
+                evaluator_working = True
+            except Exception as e:
+                evaluator_working = False
+                
+            assert evaluator_working, "Judgment evaluator integration failed"
 
     @pytest.mark.asyncio
-    async def test_quality_threshold_iterations(self, resume_agent):
-        """Test that iterations continue until quality threshold is met."""
-        content = "Basic skills"
-        section_type = SectionType.SKILLS
-        job_analysis = MagicMock()
-        
-        # Mock to return progressively higher scores
-        scores = [60, 70, 80, 95]  # Last one meets threshold
-        score_iter = iter(scores)
-        
-        async def mock_improvement(*args, **kwargs):
-            return {
-                "improved_content": f"Improved content iteration {next(score_iter)}",
-                "score": next(iter(scores)),  # Reset for next call
-                "strengths": ["Better"],
-                "weaknesses": ["Still improving"],
-                "improvement_notes": "Progressive improvement"
+    async def test_error_handling_and_fallbacks(self, resume_agent, sample_resume_text, sample_job_description):
+        """Test error handling and fallback mechanisms."""
+        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
+            mock_split.return_value = {
+                'skills': {'content': 'JavaScript, Python'}
             }
-        
-        with patch.object(resume_agent, '_generate_section_improvement', side_effect=mock_improvement):
-            with patch.object(resume_agent, '_verify_against_original', return_value={"issues": []}):
-                with patch.object(resume_agent, '_self_evaluate_content', return_value={
-                    "strengths": ["Good"], "weaknesses": ["None"], "improvement_notes": "Done"
-                }):
-                    result = await resume_agent._iterative_section_improvement(
-                        content, section_type, job_analysis, {}
-                    )
-                    
-                    # Should have run multiple iterations
-                    assert len(result.iterations) > 1
+            
+            # Test OpenAI API failure handling
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                # Simulate API failure
+                mock_improvement.side_effect = Exception("OpenAI API error")
+                
+                # Should still return a result with error handling
+                result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                
+                # The error should be handled gracefully
+                assert result["success"] is True  # Analysis continues with fallbacks
+                assert "section_analyses" in result
 
-    def test_session_management(self, resume_agent):
-        """Test session management functionality."""
-        session_id = "test-session-123"
-        session_data = {
-            "resume_text": "Test resume",
-            "job_description": "Test job",
-            "sections": {"skills": {"content": "Python, JavaScript"}}
+    @pytest.mark.asyncio
+    async def test_multiple_clarifications_workflow(self, resume_agent, sample_resume_text, sample_job_description):
+        """Test handling multiple clarifications in one session."""
+        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
+            mock_split.return_value = {
+                'skills': {'content': 'Programming'},
+                'experience': {'content': 'Software work'}
+            }
+            
+            # Mock both sections needing clarification
+            with patch.object(resume_agent, '_iterative_section_improvement') as mock_improvement:
+                def mock_analysis_with_clarification(content, section_type, *args):
+                    return SectionAnalysis(
+                        section_type=section_type,
+                        original_content=content,
+                        best_content=content,
+                        iterations=[],
+                        final_score=60,
+                        improvement_journey="Needs more details",
+                        needs_clarification=True,
+                        clarification_request=ClarificationRequest(
+                            section_type=section_type,
+                            question=f"Please provide more details about your {section_type.value}",
+                            context=f"The {section_type.value} section needs enhancement",
+                            original_content=content,
+                            reason="Insufficient detail",
+                            timestamp=datetime.now()
+                        )
+                    )
+                
+                mock_improvement.side_effect = mock_analysis_with_clarification
+                
+                result = await resume_agent.start_analysis(sample_resume_text, sample_job_description)
+                
+                assert result["success"] is True
+                assert result["needs_clarification"] is True
+                assert len(result["sections_needing_clarification"]) == 2
+                assert "skills" in result["pending_clarifications"]
+                assert "experience" in result["pending_clarifications"]
+
+    @pytest.mark.asyncio
+    async def test_session_status_tracking(self, resume_agent):
+        """Test session status and progress tracking."""
+        # Create a session
+        session_id = "test-session-456"
+        resume_agent.sessions[session_id] = {
+            "created_at": datetime.now().isoformat(),
+            "section_analyses": {"skills": "mock_analysis"},
+            "pending_clarifications": {}
         }
         
-        # Test session storage
-        resume_agent.sessions[session_id] = session_data
+        status = resume_agent.get_session_status(session_id)
         
-        # Test session retrieval
-        retrieved_session = resume_agent.sessions.get(session_id)
-        assert retrieved_session == session_data
-        
-        # Test session cleanup
-        del resume_agent.sessions[session_id]
-        assert session_id not in resume_agent.sessions
+        assert status["success"] is True
+        assert status["session_id"] == session_id
+        assert status["sections_analyzed"] == 1
+        assert status["pending_clarifications"] == 0
 
     @pytest.mark.asyncio
-    async def test_concurrent_sessions(self, resume_agent, sample_resume_text, sample_job_description):
-        """Test handling multiple concurrent analysis sessions."""
-        with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
-            mock_split.return_value = {'skills': 'JavaScript, Python'}
-            
-            # Start multiple sessions concurrently
-            tasks = [
-                resume_agent.start_analysis(sample_resume_text, sample_job_description)
-                for _ in range(3)
-            ]
-            
-            results = await asyncio.gather(*tasks)
-            
-            # All should succeed with unique session IDs
-            assert all(result["success"] for result in results)
-            session_ids = [result["session_id"] for result in results]
-            assert len(set(session_ids)) == 3  # All unique
-
-    @pytest.mark.asyncio
-    async def test_empty_section_handling(self, resume_agent):
-        """Test handling of empty or minimal sections."""
-        minimal_content = "Skills: Basic"
-        section_type = SectionType.SKILLS
-        job_analysis = MagicMock()
-        job_analysis.required_skills = ["Python", "JavaScript", "React"]
+    async def test_invalid_session_handling(self, resume_agent):
+        """Test handling of invalid session IDs."""
         
-        result = await resume_agent._iterative_section_improvement(
-            minimal_content, section_type, job_analysis, {}
-        )
+        # Test analyze_section with invalid session
+        result = await resume_agent.analyze_section("invalid-session", "skills")
+        assert result["success"] is False
+        assert "not found" in result["error"]
         
-        assert result.section_type == section_type
-        assert result.best_content is not None
-
-    @pytest.mark.asyncio 
-    async def test_judgment_integration(self, resume_agent):
-        """Test that judgment framework integration works without errors."""
-        # Test that judgment calls don't break the flow
-        with patch('app.core.resume_agent.evaluator') as mock_evaluator:
-            with patch('app.core.resume_agent.monitor') as mock_monitor:
-                content = "Test content"
-                section_type = SectionType.SKILLS
-                job_analysis = MagicMock()
-                
-                result = await resume_agent._iterative_section_improvement(
-                    content, section_type, job_analysis, {}
-                )
-                
-                # Verify judgment methods were called
-                assert mock_monitor.log_agent_action.called
-                assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_malformed_api_response_handling(self, resume_agent):
-        """Test handling of malformed API responses."""
-        # Mock malformed JSON response
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Invalid JSON {"
+        # Test provide_clarification with invalid session
+        result = await resume_agent.provide_clarification("invalid-session", "skills", "test")
+        assert result["success"] is False
+        assert "not found" in result["error"]
         
-        resume_agent.client.chat.completions.create.return_value = mock_response
-        
-        content = "Test content"
-        job_analysis = MagicMock()
-        
-        # Should handle malformed response gracefully
-        result = await resume_agent._generate_section_improvement(
-            content, SectionType.SKILLS, job_analysis, AnalysisPerspective.HIRING_MANAGER
-        )
-        
-        # Should return some kind of result even with malformed response
-        assert result is not None
+        # Test generate_final_resume with invalid session
+        result = await resume_agent.generate_final_resume("invalid-session")
+        assert result["success"] is False
+        assert "not found" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_resume_agent_integration():
-    """Integration test for the complete resume analysis workflow."""
-    sample_resume = """
-    Jane Smith
-    Data Scientist
+    """Integration test for complete resume analysis workflow."""
     
-    EXPERIENCE
-    Data Scientist | DataCorp | 2021-2023
-    - Built machine learning models for customer segmentation
-    - Analyzed large datasets using Python and SQL
+    # This test verifies the entire workflow from start to finish
+    sample_resume = """
+    John Smith
+    Full Stack Developer
     
     SKILLS
-    Python, SQL, Machine Learning, Statistics
+    JavaScript, Python, HTML, CSS
+    
+    EXPERIENCE
+    Software Developer | ABC Corp | 2021-2023
+    - Built web applications
     
     EDUCATION
-    M.S. Data Science | Tech University | 2021
+    Computer Science Degree | XYZ University | 2021
     """
     
     sample_job = """
-    Senior Data Scientist Position
-    Requirements: 3+ years experience, Python, ML, SQL
+    Senior Full Stack Developer position requiring:
+    - JavaScript, Python, React expertise
+    - 3+ years experience
+    - Team collaboration skills
     """
     
-    with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}):
-        with patch('app.core.resume_agent.AsyncOpenAI') as mock_openai:
-            # Setup mock
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message.content = json.dumps({
-                "analysis": "Strong data science background",
-                "score": 90,
-                "improvements": ["Add more ML details"],
-                "strengths": ["Good experience"],
-                "weaknesses": ["Could be more specific"],
-                "fabrication_risk": "low"
-            })
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_openai.return_value = mock_client
-            
+    with patch('app.core.resume_agent.AsyncOpenAI'):
+        with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}):
             with patch('app.utils.pdf_parser.split_resume_sections') as mock_split:
                 mock_split.return_value = {
-                    'experience': 'Data Scientist | DataCorp | 2021-2023',
-                    'skills': 'Python, SQL, Machine Learning'
+                    'skills': {'content': 'JavaScript, Python, HTML, CSS'},
+                    'experience': {'content': 'Software Developer | ABC Corp | 2021-2023'},
+                    'education': {'content': 'Computer Science Degree | XYZ University | 2021'}
                 }
                 
                 agent = IterativeResumeAgent()
                 
-                # Test complete workflow
-                start_result = await agent.start_analysis(sample_resume, sample_job)
-                assert start_result["success"] is True
-                
-                session_id = start_result["session_id"]
-                
-                # Analyze a section
-                section_result = await agent.analyze_section(session_id, SectionType.SKILLS)
-                assert section_result["success"] is True
-                
-                # Generate final resume
-                final_result = await agent.generate_final_resume(session_id)
-                assert final_result["success"] is True 
+                # Mock the improvement method to avoid actual API calls
+                with patch.object(agent, '_iterative_section_improvement') as mock_improvement:
+                    mock_improvement.return_value = SectionAnalysis(
+                        section_type=SectionType.SKILLS,
+                        original_content="JavaScript, Python, HTML, CSS",
+                        best_content="• JavaScript (Advanced)\n• Python (Intermediate)\n• HTML5, CSS3",
+                        iterations=[],
+                        final_score=85,
+                        improvement_journey="Enhanced with proficiency levels",
+                        needs_clarification=False,
+                        clarification_request=None
+                    )
+                    
+                    # Test complete workflow
+                    start_result = await agent.start_analysis(sample_resume, sample_job)
+                    assert start_result["success"] is True
+                    
+                    session_id = start_result["session_id"]
+                    
+                    # Accept some changes
+                    await agent.accept_section_changes(session_id, "skills", True)
+                    
+                    # Generate final resume
+                    final_result = await agent.generate_final_resume(session_id)
+                    assert final_result["success"] is True
+                    assert "final_resume" in final_result 

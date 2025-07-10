@@ -179,6 +179,60 @@ class JudgmentEvaluator:
             "decision_evaluated": True,
             "confidence_score": confidence_score
         }
+    
+    def evaluate_final_resume_quality(
+        self,
+        original_resume: str,
+        final_resume: str,
+        job_description: str,
+        user_decisions: Dict[str, bool],
+        session_metrics: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Evaluate the final resume quality and user satisfaction."""
+        
+        if not JUDGMENT_AVAILABLE or not judgment:
+            return {
+                "evaluation_completed": False,
+                "reason": "Judgment framework not available"
+            }
+        
+        try:
+            # Comprehensive final resume evaluation
+            example = Example(
+                input=f"Original Resume:\n{original_resume}\n\nJob Description:\n{job_description}",
+                actual_output=final_resume,
+                metadata={
+                    "user_decisions": user_decisions,
+                    "session_metrics": session_metrics,
+                    "evaluation_type": "final_resume"
+                }
+            )
+            
+            # Multi-metric evaluation
+            if JUDGMENT_IMPORTS_AVAILABLE:
+                judgment.async_evaluate(
+                    scorers=[
+                        AnswerRelevancyScorer(threshold=0.8),
+                        AnswerCorrectnessScorer(threshold=0.7),
+                        FaithfulnessScorer(threshold=0.9)
+                    ],
+                    example=example,
+                    model="gpt-4o-mini"
+                )
+            
+            logger.info(f"Final resume evaluation initiated with {len(user_decisions)} user decisions")
+            
+            return {
+                "evaluation_completed": True,
+                "session_metrics": session_metrics
+            }
+            
+        except Exception as e:
+            logger.warning(f"Final resume evaluation error: {str(e)}")
+            return {
+                "evaluation_completed": False,
+                "error": str(e)
+            }
 
 
 class JudgmentMonitor:
@@ -191,6 +245,7 @@ class JudgmentMonitor:
         self.clarification_count = 0
         self.iteration_count = 0
         self.failed_suggestions = {"skills": 0, "experience": 0, "education": 0, "projects": 0}
+        self.session_metrics = {}  # Track per-session metrics
         
     def log_agent_action(self, action_type: str, details: Dict[str, Any]):
         """Log agent actions for monitoring."""
@@ -239,18 +294,26 @@ class JudgmentMonitor:
         if self.failed_suggestions[section] >= 5:
             self.alert_unusual_pattern(f"5+ failed {section} suggestions in a row")
     
-    def log_error(self, error_type: str, error_details: Dict[str, Any]):
-        """Log agent errors."""
+    def log_error(self, error_type: str, details: Dict[str, Any]):
+        """Log errors for pattern analysis."""
         
         self.error_count += 1
+        section = details.get("section_type", "unknown")
         
-        self.log_agent_action("error", {
-            "error_type": error_type,
-            "error_count": self.error_count,
-            **error_details
-        })
+        if section in self.failed_suggestions:
+            self.failed_suggestions[section] += 1
         
-        logger.error(f"Agent error: {error_type} - {error_details}")
+        if JUDGMENT_AVAILABLE and judgment:
+            with judgment.trace(f"error_{error_type}") as trace:
+                trace.metadata = {
+                    "error_type": error_type,
+                    "error_count": self.error_count,
+                    "section": section,
+                    "timestamp": datetime.now().isoformat(),
+                    "details": details
+                }
+        
+        logger.error(f"Error logged: {error_type} - {details}")
     
     def alert_unusual_pattern(self, pattern_description: str):
         """Alert on unusual patterns (can be extended to send actual alerts)."""
@@ -265,10 +328,33 @@ class JudgmentMonitor:
     def log_quality_metrics(self, metrics: Dict[str, Any]):
         """Log quality metrics for trend analysis."""
         
-        self.log_agent_action("quality_metrics", {
-            "metrics": metrics,
-            "timestamp": metrics.get("timestamp", datetime.now().isoformat())
-        })
+        if JUDGMENT_AVAILABLE and judgment:
+            with judgment.trace("quality_metrics") as trace:
+                trace.metadata = metrics
+        
+        logger.info(f"Quality metrics: {metrics}")
+    
+    def log_session_completion(self, session_id: str, session_data: Dict[str, Any]):
+        """Log complete session metrics for comprehensive evaluation."""
+        
+        session_metrics = {
+            "session_id": session_id,
+            "sections_analyzed": len(session_data.get("section_analyses", {})),
+            "clarifications_requested": len(session_data.get("pending_clarifications", {})),
+            "accepted_changes": len([v for v in session_data.get("accepted_changes", {}).values() if v]),
+            "rejected_changes": len([v for v in session_data.get("accepted_changes", {}).values() if not v]),
+            "completion_timestamp": datetime.now().isoformat()
+        }
+        
+        self.session_metrics[session_id] = session_metrics
+        
+        if JUDGMENT_AVAILABLE and judgment:
+            with judgment.trace("session_completion") as trace:
+                trace.metadata = session_metrics
+        
+        logger.info(f"Session completed: {session_metrics}")
+        
+        return session_metrics
     
     def get_monitoring_summary(self) -> Dict[str, Any]:
         """Get comprehensive monitoring summary."""
@@ -288,9 +374,11 @@ evaluator = JudgmentEvaluator()
 monitor = JudgmentMonitor()
 
 
-def get_judgment_tracer() -> Tracer:
+def get_judgment_tracer():
     """Get the global judgment tracer instance."""
-    return judgment
+    if JUDGMENT_AVAILABLE and judgment:
+        return judgment
+    return None
 
 
 def get_judgment_evaluator() -> JudgmentEvaluator:

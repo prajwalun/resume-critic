@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 
 from .utils.pdf_parser import extract_resume_text, clean_resume_text
 from .core.resume_agent import IterativeResumeAgent as ResumeWiseAgent
-from .core.logging_config import setup_clean_logging, get_clean_logger
+from .core.logging_config import setup_professional_logging, get_resume_logger
 
-# Setup clean logging
-setup_clean_logging()
-logger = get_clean_logger(__name__)
+# Setup professional logging
+setup_professional_logging("INFO")
+logger = get_resume_logger(__name__)
 
 # Judgment framework for API-level tracing
 try:
@@ -182,7 +182,15 @@ async def start_analysis(
                 detail=result.get("error", "Failed to start analysis")
             )
         
-        logger.info(f"📋 Analysis session {result['session_id'][:8]} - {len(result.get('sections', {}))} sections parsed")
+        session_id = result['session_id']
+        sections_count = len(result.get('sections', {}))
+        needs_clarification = result.get("needs_clarification", False)
+        
+        if needs_clarification:
+            clarifications_count = len(result.get("pending_clarifications", {}))
+            logger.info(f"Analysis started | Session: {session_id[:8]} | {sections_count} sections | {clarifications_count} clarifications needed")
+        else:
+            logger.info(f"Analysis completed | Session: {session_id[:8]} | {sections_count} sections | No clarifications needed")
         
         return AnalysisStartResponse(
             success=True,
