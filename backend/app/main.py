@@ -6,7 +6,6 @@ Provides structured section-by-section analysis with human-in-the-loop clarifica
 """
 
 import os
-import logging
 from typing import Dict, Any, Optional, List
 from uuid import uuid4
 
@@ -16,10 +15,20 @@ from pydantic import BaseModel, Field
 
 from .utils.pdf_parser import extract_resume_text, clean_resume_text
 from .core.resume_agent import IterativeResumeAgent as ResumeWiseAgent
+from .core.logging_config import setup_clean_logging, get_clean_logger
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Setup clean logging
+setup_clean_logging()
+logger = get_clean_logger(__name__)
+
+# Judgment framework for API-level tracing
+try:
+    from .core.judgment_config import get_judgment_tracer
+    judgment = get_judgment_tracer()
+    JUDGMENT_AVAILABLE = True
+except ImportError:
+    judgment = None
+    JUDGMENT_AVAILABLE = False
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -109,7 +118,14 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "ResumeWise API"}
 
+def _trace_if_available(func):
+    """Decorator to add judgment tracing if available."""
+    if JUDGMENT_AVAILABLE and judgment:
+        return judgment.observe(name="resume_analysis_workflow", span_type="workflow")(func)
+    return func
+
 @app.post("/api/start-analysis", response_model=AnalysisStartResponse)
+@_trace_if_available
 async def start_analysis(
     job_description: str = Form(...),
     file: UploadFile = File(...)
@@ -151,29 +167,7 @@ async def start_analysis(
                 detail=result.get("error", "Failed to start analysis")
             )
         
-        logger.info(f"Started analysis session {result['session_id']}")
-        
-        # 🔍 DEBUG: Log what we're returning to frontend
-        logger.info("=== BACKEND DEBUG: API Response Structure ===")
-        logger.info(f"Response success: {result['success']}")
-        logger.info(f"Response session_id: {result['session_id']}")
-        logger.info(f"Number of sections: {len(result.get('sections', {}))}")
-        logger.info(f"Section types: {list(result.get('sections', {}).keys())}")
-        logger.info(f"Number of section analyses: {len(result.get('section_analyses', {}))}")
-        logger.info(f"Section analyses types: {list(result.get('section_analyses', {}).keys())}")
-        
-        # Check specific sections
-        for section_type in ['skills', 'projects']:
-            if section_type in result.get('sections', {}):
-                section_data = result['sections'][section_type]
-                content_len = len(section_data.get('content', ''))
-                logger.info(f"Section {section_type}: content length = {content_len}")
-                if content_len > 0:
-                    logger.info(f"Section {section_type} content preview: {section_data['content'][:100]}...")
-                else:
-                    logger.warning(f"Section {section_type} has EMPTY content!")
-            else:
-                logger.warning(f"Section {section_type} MISSING from response!")
+        logger.info(f"📋 Analysis session {result['session_id'][:8]} - {len(result.get('sections', {}))} sections parsed")
         
         return AnalysisStartResponse(
             success=True,

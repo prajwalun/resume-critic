@@ -112,7 +112,7 @@ echo "   ⚡ Primary Scoring: Fast agent decisions (< 1 second)"
 echo "   🔬 Judgment Framework: Comprehensive evaluation (2-5 seconds)"
 echo ""
 
-python -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0 &
+python -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0 --log-level info --no-access-log &
 BACKEND_PID=$!
 
 # Wait for backend to start

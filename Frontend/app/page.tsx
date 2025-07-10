@@ -176,7 +176,7 @@ export default function ResumeWise() {
         event.target.value = ''
       } else {
         setFileValidationError("")
-        setResumeFile(file)
+      setResumeFile(file)
       }
     }
   }
@@ -596,12 +596,12 @@ export default function ResumeWise() {
                 <div className="text-center mb-8">
                   <div className="w-16 h-16 bg-gradient-to-r from-slate-600 to-slate-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg border border-slate-600/30">
                     <Upload className="w-8 h-8 text-slate-200" />
-                  </div>
+        </div>
                   <h3 className="text-xl font-semibold text-slate-100 mb-3">Resume Upload</h3>
                   <p className="text-slate-400">
                     Upload your current resume for analysis
                   </p>
-                </div>
+      </div>
                 
                 <div className="flex-1 flex flex-col">
                   <input
@@ -667,7 +667,7 @@ export default function ResumeWise() {
                     <div className="flex items-center gap-2 text-red-300">
                       <AlertCircle className="w-5 h-5" />
                       <span className="font-medium">{fileValidationError}</span>
-                    </div>
+        </div>
                   </div>
                 )}
               </div>
@@ -711,7 +711,7 @@ export default function ResumeWise() {
                   <AlertCircle className="w-5 h-5" />
                   <span className="font-medium">{error}</span>
                 </div>
-              </div>
+          </div>
             )}
 
             {/* Start Analysis Button - Improved Alignment */}
@@ -740,7 +740,7 @@ export default function ResumeWise() {
                   Ready to analyze your resume
                 </p>
               )}
-            </div>
+      </div>
           </div>
         </div>
       </div>
@@ -786,32 +786,29 @@ export default function ResumeWise() {
           <div className="text-center mb-12">
             <h2 className="text-4xl lg:text-5xl font-bold text-slate-100 mb-6 leading-tight">
               Analysis Results
-            </h2>
+          </h2>
             <p className="text-xl text-slate-300 max-w-3xl mx-auto leading-relaxed">
               Review each section's analysis. Accept or reject changes to customize your final resume.
-            </p>
-          </div>
+          </p>
+        </div>
 
-          {/* Job Analysis Summary - Simplified */}
+          {/* Job Analysis Summary - Clean and Minimal */}
           {(jobAnalysis.key_technologies.length > 0 || jobAnalysis.requirements.length > 0) && (
-            <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl p-8 mb-12">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30">
-                  <Target className="w-5 h-5 text-slate-300" />
+            <div className="bg-slate-800/30 backdrop-blur-xl rounded-xl border border-slate-700/30 shadow-lg p-6 mb-8">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center">
+                  <Target className="w-4 h-4 text-slate-300" />
                 </div>
-                <h3 className="text-xl font-semibold text-slate-100">Target Position Analysis</h3>
+                <h3 className="text-lg font-semibold text-slate-100">Target Position Overview</h3>
               </div>
               
-              <div className="grid md:grid-cols-2 gap-8">
+              <div className="grid md:grid-cols-2 gap-6">
                 {jobAnalysis.key_technologies.length > 0 && (
                   <div>
-                    <h4 className="text-lg font-medium text-slate-200 mb-4 flex items-center gap-2">
-                      <Code className="w-4 h-4 text-slate-400" />
-                      Key Technologies
-                    </h4>
+                    <h4 className="text-sm font-medium text-slate-300 mb-3">Key Technologies</h4>
                     <div className="flex flex-wrap gap-2">
-                      {jobAnalysis.key_technologies.slice(0, 8).map((tech, idx) => (
-                        <span key={idx} className="px-3 py-1 bg-slate-700/50 text-slate-300 text-sm rounded-lg border border-slate-600/30">
+                      {jobAnalysis.key_technologies.slice(0, 6).map((tech, idx) => (
+                        <span key={idx} className="px-2 py-1 bg-slate-700/40 text-slate-300 text-xs rounded-md">
                           {tech}
                         </span>
                       ))}
@@ -820,15 +817,12 @@ export default function ResumeWise() {
                 )}
                 {jobAnalysis.requirements.length > 0 && (
                   <div>
-                    <h4 className="text-lg font-medium text-slate-200 mb-4 flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-slate-400" />
-                      Core Requirements
-                    </h4>
-                    <ul className="space-y-2">
+                    <h4 className="text-sm font-medium text-slate-300 mb-3">Core Requirements</h4>
+                    <ul className="space-y-1">
                       {jobAnalysis.requirements.slice(0, 3).map((req, idx) => (
-                        <li key={idx} className="flex items-start gap-3 text-slate-300">
-                          <div className="w-1.5 h-1.5 rounded-full bg-slate-400 mt-2 flex-shrink-0" />
-                          <span className="text-sm leading-relaxed">{req}</span>
+                        <li key={idx} className="flex items-start gap-2 text-slate-300">
+                          <div className="w-1 h-1 rounded-full bg-slate-400 mt-2 flex-shrink-0" />
+                          <span className="text-xs leading-relaxed">{req}</span>
                         </li>
                       ))}
                     </ul>
@@ -867,39 +861,39 @@ export default function ResumeWise() {
               const hasValidContent = originalContent && originalContent.length > 0
 
               return (
-                <div key={sectionType} className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden">
-                  {/* Section Header */}
-                  <div className="bg-slate-700/30 border-b border-slate-600/30 p-6">
+                <div key={sectionType} className="bg-slate-800/30 backdrop-blur-xl rounded-xl border border-slate-700/30 shadow-lg overflow-hidden">
+                  {/* Section Header - Clean and Minimal */}
+                  <div className="bg-slate-700/20 border-b border-slate-600/20 p-5">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30">
-                          <SectionIcon className="w-5 h-5 text-slate-300" />
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center">
+                          <SectionIcon className="w-4 h-4 text-slate-300" />
                         </div>
                         <div>
-                          <h3 className="text-xl font-semibold text-slate-100">
+                          <h3 className="text-lg font-semibold text-slate-100">
                             {SECTION_DISPLAY_NAMES[sectionType] || sectionType}
                           </h3>
                           {analysis && (
-                            <div className="flex items-center gap-6 mt-1">
-                              <div className="flex items-center gap-2">
-                                <Star className="w-4 h-4 text-yellow-500" />
-                                <span className="text-slate-400 text-sm">
-                                  Score: {displayScore}/5
+                            <div className="flex items-center gap-4 mt-1">
+                              <div className="flex items-center gap-1">
+                                <Star className="w-3 h-3 text-yellow-500" />
+                                <span className="text-slate-400 text-xs">
+                                  {displayScore}/5
                                 </span>
                               </div>
                               {isAccepted && (
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle className="w-4 h-4 text-emerald-400" />
-                                  <span className="text-emerald-400 text-sm">
-                                    Changes Accepted
+                                <div className="flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3 text-emerald-400" />
+                                  <span className="text-emerald-400 text-xs">
+                                    Accepted
                                   </span>
                                 </div>
                               )}
                               {isRejected && (
-                                <div className="flex items-center gap-2">
-                                  <XCircle className="w-4 h-4 text-red-400" />
-                                  <span className="text-red-400 text-sm">
-                                    Changes Rejected
+                                <div className="flex items-center gap-1">
+                                  <XCircle className="w-3 h-3 text-red-400" />
+                                  <span className="text-red-400 text-xs">
+                                    Rejected
                                   </span>
                                 </div>
                               )}
@@ -910,33 +904,33 @@ export default function ResumeWise() {
                     </div>
                   </div>
 
-                  {/* Section Content */}
-                  <div className="p-6">
+                  {/* Section Content - Clean and Minimal */}
+                  <div className="p-5">
                     {!hasValidContent ? (
-                      <div className="text-center py-12">
-                        <div className="w-12 h-12 bg-yellow-500/20 rounded-lg flex items-center justify-center mx-auto mb-4">
-                          <AlertCircle className="w-6 h-6 text-yellow-400" />
+                      <div className="text-center py-8">
+                        <div className="w-10 h-10 bg-yellow-500/20 rounded-lg flex items-center justify-center mx-auto mb-3">
+                          <AlertCircle className="w-5 h-5 text-yellow-400" />
                         </div>
-                        <h4 className="text-lg font-semibold text-slate-200 mb-2">No Content Available</h4>
-                        <p className="text-slate-400">This section was not found in your resume.</p>
+                        <h4 className="text-base font-medium text-slate-200 mb-1">No Content Available</h4>
+                        <p className="text-slate-400 text-sm">This section was not found in your resume.</p>
                       </div>
                     ) : !analysis ? (
-                      <div className="text-center py-12">
-                        <Loader className="w-6 h-6 mx-auto mb-4 animate-spin text-slate-400" />
-                        <p className="text-slate-400">Analyzing section...</p>
+                      <div className="text-center py-8">
+                        <Loader className="w-5 h-5 mx-auto mb-3 animate-spin text-slate-400" />
+                        <p className="text-slate-400 text-sm">Analyzing section...</p>
                       </div>
                     ) : (
-                      <div className="space-y-6">
-                        {/* Content Comparison */}
-                        <div className="grid lg:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        {/* Content Comparison - Cleaner Layout */}
+                        <div className="grid lg:grid-cols-2 gap-4">
                           {/* Original Content */}
                           <div>
-                            <div className="flex items-center gap-2 mb-4">
-                              <FileText className="w-4 h-4 text-slate-400" />
-                              <h4 className="text-sm font-medium text-slate-300">Original Content</h4>
+                            <div className="flex items-center gap-2 mb-3">
+                              <FileText className="w-3 h-3 text-slate-400" />
+                              <h4 className="text-xs font-medium text-slate-300 uppercase tracking-wide">Original</h4>
                             </div>
-                            <div className="bg-slate-700/30 border border-slate-600/30 rounded-lg p-4">
-                              <pre className="whitespace-pre-wrap text-sm text-slate-200 font-sans leading-relaxed">
+                            <div className="bg-slate-700/20 border border-slate-600/20 rounded-lg p-3">
+                              <pre className="whitespace-pre-wrap text-xs text-slate-200 font-sans leading-relaxed">
                                 {originalContent}
                               </pre>
                             </div>
@@ -944,64 +938,67 @@ export default function ResumeWise() {
 
                           {/* Improved Content */}
                           <div>
-                            <div className="flex items-center gap-2 mb-4">
-                              <Edit3 className="w-4 h-4 text-slate-400" />
-                              <h4 className="text-sm font-medium text-slate-300">Suggested Improvements</h4>
+                            <div className="flex items-center gap-2 mb-3">
+                              <Edit3 className="w-3 h-3 text-slate-400" />
+                              <h4 className="text-xs font-medium text-slate-300 uppercase tracking-wide">Suggested</h4>
                             </div>
-                            <div className="bg-slate-700/30 border border-slate-600/30 rounded-lg p-4">
+                            <div className="bg-slate-700/20 border border-slate-600/20 rounded-lg p-3">
                               {improvedContent ? (
-                                <pre className="whitespace-pre-wrap text-sm text-slate-200 font-sans leading-relaxed">
+                                <pre className="whitespace-pre-wrap text-xs text-slate-200 font-sans leading-relaxed">
                                   {improvedContent}
                                 </pre>
                               ) : (
-                                <p className="text-slate-400 text-sm italic">No improvements suggested</p>
+                                <p className="text-slate-400 text-xs italic">No improvements suggested</p>
                               )}
                             </div>
                           </div>
                         </div>
 
-                        {/* Analysis Feedback */}
+                        {/* Analysis Feedback - Minimal */}
                         {analysis.feedback && (
-                          <div className="bg-slate-700/20 border border-slate-600/30 rounded-lg p-4">
-                            <div className="flex items-start gap-3">
-                              <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center border border-slate-600/30 flex-shrink-0">
-                                <Lightbulb className="w-4 h-4 text-slate-400" />
+                          <div className="bg-slate-700/10 border border-slate-600/20 rounded-lg p-3">
+                            <div className="flex items-start gap-2">
+                              <div className="w-6 h-6 bg-slate-700/40 rounded-md flex items-center justify-center flex-shrink-0">
+                                <Lightbulb className="w-3 h-3 text-slate-400" />
                               </div>
                               <div>
-                                <h5 className="text-sm font-medium text-slate-200 mb-2">Analysis Notes</h5>
-                                <p className="text-slate-300 text-sm leading-relaxed">{analysis.feedback}</p>
+                                <h5 className="text-xs font-medium text-slate-200 mb-1 uppercase tracking-wide">Notes</h5>
+                                <p className="text-slate-300 text-xs leading-relaxed">{analysis.feedback}</p>
                               </div>
                             </div>
                           </div>
                         )}
 
-                        {/* Action Buttons */}
+                        {/* Action Buttons - Clean and Minimal */}
                         {improvedContent && (
-                          <div className="flex gap-3 pt-4 border-t border-slate-600/30">
+                          <div className="flex gap-2 pt-3 border-t border-slate-600/20">
                             <Button
                               onClick={() => handleAcceptChanges(sectionType, true)}
                               disabled={isAccepted === true}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg disabled:opacity-50"
+                              size="sm"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 text-xs px-3 py-1"
                             >
-                              <CheckCircle className="w-4 h-4 mr-2" />
-                              {isAccepted === true ? 'Changes Accepted' : 'Accept Changes'}
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              {isAccepted === true ? 'Accepted' : 'Accept'}
                             </Button>
                             <Button
                               onClick={() => handleAcceptChanges(sectionType, false)}
                               disabled={isAccepted === false}
                               variant="outline"
-                              className="border-red-400/30 text-red-400 hover:bg-red-500/10 hover:border-red-400/50 disabled:opacity-50"
+                              size="sm"
+                              className="border-red-400/30 text-red-400 hover:bg-red-500/10 hover:border-red-400/50 disabled:opacity-50 text-xs px-3 py-1"
                             >
-                              <XCircle className="w-4 h-4 mr-2" />
-                              {isAccepted === false ? 'Changes Rejected' : 'Reject Changes'}
+                              <XCircle className="w-3 h-3 mr-1" />
+                              {isAccepted === false ? 'Rejected' : 'Reject'}
                             </Button>
                             {hasUndoHistory && (
                               <Button
                                 onClick={() => handleUndoChanges(sectionType)}
                                 variant="outline"
-                                className="border-slate-600/30 text-slate-400 hover:bg-slate-700/30"
+                                size="sm"
+                                className="border-slate-600/30 text-slate-400 hover:bg-slate-700/30 text-xs px-3 py-1"
                               >
-                                <RefreshCw className="w-4 h-4 mr-2" />
+                                <RefreshCw className="w-3 h-3 mr-1" />
                                 Undo
                               </Button>
                             )}
@@ -1011,9 +1008,9 @@ export default function ResumeWise() {
                     )}
                   </div>
                 </div>
-              )
-            })}
-          </div>
+          )
+        })}
+      </div>
 
           {/* Generate Final Resume Button */}
           <div className="mt-12 text-center">
@@ -1023,30 +1020,30 @@ export default function ResumeWise() {
                 <p className="text-slate-300 mb-6 leading-relaxed">
                   Ready to create your final resume with all approved changes applied.
                 </p>
-                <Button 
-                  onClick={handleGenerateFinalResume}
+          <Button 
+            onClick={handleGenerateFinalResume}
                   disabled={isGeneratingFinal}
                   size="lg"
                   className="bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white shadow-xl hover:shadow-2xl transition-all duration-300 px-8 py-3 text-lg font-medium rounded-xl border border-slate-600/30"
-                >
-                  {isGeneratingFinal ? (
-                    <>
+          >
+            {isGeneratingFinal ? (
+              <>
                       <Loader className="w-5 h-5 mr-3 animate-spin" />
                       Generating Resume...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5 mr-3" />
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5 mr-3" />
                       Generate Resume
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          </div>
+              </>
+            )}
+          </Button>
         </div>
+    </div>
       </div>
-    )
+      </div>
+    </div>
+  )
   }
 
   const renderFinalResume = () => {
@@ -1061,29 +1058,29 @@ export default function ResumeWise() {
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center shadow-lg border border-slate-600/30">
                   <span className="text-white font-bold text-xl">RW</span>
-                </div>
+        </div>
                 <div>
                   <h1 className="text-2xl font-bold text-slate-100">ResumeWise</h1>
                   <p className="text-slate-400 text-sm">Professional Resume Analysis</p>
-                </div>
+      </div>
               </div>
               <div className="flex items-center gap-4">
-                <Button
+              <Button 
                   onClick={downloadResume}
                   className="bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white shadow-lg border border-slate-600/30"
-                >
+              >
                   <Download className="w-4 h-4 mr-2" />
                   Download Resume
-                </Button>
-                <Button
+              </Button>
+              <Button 
                   onClick={resetAnalysis}
                   variant="outline"
                   className="border-slate-600/30 text-slate-300 hover:bg-slate-700/30"
-                >
+              >
                   New Analysis
-                </Button>
-              </div>
+              </Button>
             </div>
+          </div>
           </div>
         </div>
 

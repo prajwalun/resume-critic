@@ -9,28 +9,69 @@ from typing import Dict, Any, List, Optional
 from enum import Enum
 from datetime import datetime
 
-from judgeval.common.tracer import Tracer
-from judgeval.scorers import (
-    AnswerRelevancyScorer,
-    FaithfulnessScorer,
-    AnswerCorrectnessScorer,
-    HallucinationScorer
-)
-from judgeval.data import Example
-from judgeval import JudgmentClient
+# Load environment variables first, before accessing them
+from dotenv import load_dotenv
+
+# Load .env file with proper path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+backend_dir = os.path.dirname(os.path.dirname(current_dir))
+env_path = os.path.join(backend_dir, ".env")
+load_dotenv(dotenv_path=env_path)
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Initialize Judgment components
-judgment = Tracer(
-    api_key=os.getenv("JUDGMENT_API_KEY"),
-    project_name="resume-critic-ai",
-    enable_monitoring=True,
-    deep_tracing=True
-)
+# Try to import judgment framework components
+try:
+    from judgeval.common.tracer import Tracer
+    from judgeval.scorers import (
+        AnswerRelevancyScorer,
+        FaithfulnessScorer,
+        AnswerCorrectnessScorer,
+        HallucinationScorer
+    )
+    from judgeval.data import Example
+    from judgeval import JudgmentClient
+    JUDGMENT_IMPORTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Judgment framework imports not available: {e}")
+    # Create dummy classes to prevent import errors
+    Tracer = None
+    AnswerRelevancyScorer = None
+    FaithfulnessScorer = None
+    AnswerCorrectnessScorer = None
+    HallucinationScorer = None
+    Example = None
+    JudgmentClient = None
+    JUDGMENT_IMPORTS_AVAILABLE = False
 
-judgment_client = JudgmentClient()
+
+# Initialize Judgment components
+try:
+    judgment_api_key = os.getenv("JUDGMENT_API_KEY")
+    if judgment_api_key and JUDGMENT_IMPORTS_AVAILABLE and Tracer is not None:
+        judgment = Tracer(
+            api_key=judgment_api_key,
+            project_name="resume-critic-ai",
+            enable_monitoring=True,
+            deep_tracing=True
+        )
+        judgment_client = JudgmentClient()
+        JUDGMENT_AVAILABLE = True
+        logger.info("Judgment framework initialized successfully")
+    else:
+        # Fallback when no API key is available or imports failed
+        judgment = None
+        judgment_client = None
+        JUDGMENT_AVAILABLE = False
+        if not JUDGMENT_IMPORTS_AVAILABLE:
+            logger.warning("Judgment framework not available - imports failed")
+        else:
+            logger.warning("JUDGMENT_API_KEY not set - using fallback mode")
+except Exception as e:
+    # Fallback for any judgment initialization errors
+    JUDGMENT_AVAILABLE = False
+    logger.warning(f"Judgment initialization failed: {str(e)} - using fallback mode")
 
 
 class ResumeMetrics(Enum):
@@ -49,14 +90,17 @@ class JudgmentEvaluator:
     """
     
     def __init__(self):
-        self.scorers = {
-            ResumeMetrics.STRUCTURE_ACCURACY: AnswerCorrectnessScorer(threshold=0.8),
-            ResumeMetrics.FORMATTING_QUALITY: AnswerRelevancyScorer(threshold=0.7),
-            ResumeMetrics.JOB_RELEVANCE: AnswerRelevancyScorer(threshold=0.6),
-            ResumeMetrics.CLARITY_CONCISENESS: AnswerRelevancyScorer(threshold=0.7),
-            ResumeMetrics.CONTENT_FAITHFULNESS: FaithfulnessScorer(threshold=0.9),
-            ResumeMetrics.IMPROVEMENT_QUALITY: HallucinationScorer(threshold=0.1)
-        }
+        if JUDGMENT_AVAILABLE and JUDGMENT_IMPORTS_AVAILABLE:
+            self.scorers = {
+                ResumeMetrics.STRUCTURE_ACCURACY: AnswerCorrectnessScorer(threshold=0.8) if AnswerCorrectnessScorer else None,
+                ResumeMetrics.FORMATTING_QUALITY: AnswerRelevancyScorer(threshold=0.7) if AnswerRelevancyScorer else None,
+                ResumeMetrics.JOB_RELEVANCE: AnswerRelevancyScorer(threshold=0.6) if AnswerRelevancyScorer else None,
+                ResumeMetrics.CLARITY_CONCISENESS: AnswerRelevancyScorer(threshold=0.7) if AnswerRelevancyScorer else None,
+                ResumeMetrics.CONTENT_FAITHFULNESS: FaithfulnessScorer(threshold=0.9) if FaithfulnessScorer else None,
+                ResumeMetrics.IMPROVEMENT_QUALITY: HallucinationScorer(threshold=0.1) if HallucinationScorer else None
+            }
+        else:
+            self.scorers = {}
     
     def evaluate_section_improvement(
         self,
@@ -67,6 +111,16 @@ class JudgmentEvaluator:
         metric: ResumeMetrics = ResumeMetrics.IMPROVEMENT_QUALITY
     ) -> Dict[str, Any]:
         """Evaluate the quality of section improvements."""
+        
+        if not JUDGMENT_AVAILABLE or not judgment:
+            return {
+                "metric": metric.value,
+                "original_length": len(original_content),
+                "improved_length": len(improved_content),
+                "section_type": section_type,
+                "evaluation_submitted": False,
+                "reason": "Judgment framework not available"
+            }
         
         example = Example(
             input=f"Original {section_type}: {original_content}\nJob Description: {job_description}",
@@ -98,6 +152,13 @@ class JudgmentEvaluator:
         confidence_score: float
     ) -> Dict[str, Any]:
         """Evaluate agent decision-making quality."""
+        
+        if not JUDGMENT_AVAILABLE or not judgment:
+            return {
+                "decision_evaluated": False,
+                "confidence_score": confidence_score,
+                "reason": "Judgment framework not available"
+            }
         
         example = Example(
             input=decision_context,
@@ -134,15 +195,16 @@ class JudgmentMonitor:
     def log_agent_action(self, action_type: str, details: Dict[str, Any]):
         """Log agent actions for monitoring."""
         
-        # Use judgment's observe decorator to track actions
-        with judgment.trace(f"agent_action_{action_type}") as trace:
-            trace.metadata = {
-                "action_type": action_type,
-                "timestamp": details.get("timestamp"),
-                "section": details.get("section"),
-                "success": details.get("success", True),
-                "details": details
-            }
+        if JUDGMENT_AVAILABLE and judgment:
+            # Use judgment's observe decorator to track actions
+            with judgment.trace(f"agent_action_{action_type}") as trace:
+                trace.metadata = {
+                    "action_type": action_type,
+                    "timestamp": details.get("timestamp"),
+                    "section": details.get("section"),
+                    "success": details.get("success", True),
+                    "details": details
+                }
         
         logger.info(f"Agent action logged: {action_type} - {details}")
     
@@ -216,7 +278,8 @@ class JudgmentMonitor:
             "total_clarifications": self.clarification_count,
             "total_iterations": self.iteration_count,
             "failed_suggestions_by_section": self.failed_suggestions,
-            "monitoring_active": True
+            "monitoring_active": True,
+            "judgment_available": JUDGMENT_AVAILABLE
         }
 
 

@@ -49,9 +49,11 @@ backend_dir = os.path.dirname(os.path.dirname(current_dir))
 env_path = os.path.join(backend_dir, ".env")
 load_dotenv(dotenv_path=env_path)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import clean logging
+from .logging_config import get_clean_logger
+
+# Setup clean logger
+logger = get_clean_logger(__name__)
 
 class SectionType(Enum):
     """Enum for resume section types."""
@@ -129,7 +131,7 @@ class IterativeResumeAgent:
         
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.error("❌ OPENAI_API_KEY environment variable is not set!")
+            logger.error("OPENAI_API_KEY environment variable is not set!")
             raise ValueError("OpenAI API key is required. Please set OPENAI_API_KEY in your .env file.")
         
         try:
@@ -139,7 +141,7 @@ class IterativeResumeAgent:
                 timeout=60.0,  # Longer timeout for iterative analysis
                 max_retries=3
             ))
-            logger.info("✅ Iterative Agentic OpenAI client initialized successfully with Judgment tracing")
+            logger.info("ResumeWise initialized with Judgment observability")
         except ImportError:
             # Fallback if wrap is not available
             self.client = AsyncOpenAI(
@@ -147,11 +149,11 @@ class IterativeResumeAgent:
                 timeout=60.0,  # Longer timeout for iterative analysis
                 max_retries=3
             )
-            logger.info("✅ Iterative Agentic OpenAI client initialized successfully (without Judgment tracing)")
+            logger.info("ResumeWise initialized")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize OpenAI client: {str(e)}")
+            logger.error(f"Failed to initialize OpenAI client: {str(e)}")
             raise
-        
+
         # Iterative analysis configuration
         self.max_iterations = 5  # Maximum refinement iterations
         self.quality_threshold = 90  # Don't stop until we reach this score
@@ -169,10 +171,10 @@ class IterativeResumeAgent:
         # Common formatting rules
         self.base_formatting_rules = """
 CRITICAL RESUME FORMATTING RULES:
-🚫 NEVER FABRICATE - Only use information that exists in the original content
-🚫 NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
-🚫 NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
-🚫 NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
+NEVER FABRICATE - Only use information that exists in the original content
+NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
+NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
+NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
 """
 
         self.conservative_rules = """
@@ -194,20 +196,20 @@ CONSERVATIVE ENHANCEMENT APPROACH:
         self.section_prompts = {
             SectionType.SKILLS: f"""
 CRITICAL RESUME FORMATTING RULES:
-🚫 NEVER FABRICATE - Only use information that exists in the original content
-🚫 NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
-🚫 NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
-🚫 NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
+NEVER FABRICATE - Only use information that exists in the original content
+NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
+NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
+NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
 
-🔒 CRITICAL SKILLS FORMATTING RULES - MUST FOLLOW EXACTLY:
+CRITICAL SKILLS FORMATTING RULES - MUST FOLLOW EXACTLY:
 
-❌ ABSOLUTELY FORBIDDEN:
+ABSOLUTELY FORBIDDEN:
 - Converting structured skills to paragraph format
 - Using phrases like "Proficient in", "Skilled in", "Experienced in"
 - Creating sentences about skills: "Strong programming skills in..."
 - Bullet points with explanations: "• JavaScript - for building applications"
 
-✅ MANDATORY STRUCTURE PRESERVATION:
+MANDATORY STRUCTURE PRESERVATION:
 If original uses categories like:
 ▸ Languages: Python, HTML, CSS3, JavaScript, TypeScript
 ▸ Framework and Libraries: React Native, Django, Node.js
@@ -216,12 +218,12 @@ THEN OUTPUT MUST MAINTAIN EXACT SAME STRUCTURE:
 ▸ Languages: Python, HTML, CSS3, JavaScript, TypeScript  
 ▸ Framework and Libraries: React Native, Django, Node.js
 
-📋 SKILLS SECTION FORMATTING REQUIREMENTS:
-✅ PRESERVE original categorization markers (▸, bullets, colons)
-✅ MAINTAIN comma-separated lists within categories
-✅ KEEP same category names from original
-✅ ONLY reorganize existing skills - NEVER add new ones
-✅ Fix minor formatting inconsistencies (spacing, capitalization)
+SKILLS SECTION FORMATTING REQUIREMENTS:
+PRESERVE original categorization markers (▸, bullets, colons)
+MAINTAIN comma-separated lists within categories
+KEEP same category names from original
+ONLY reorganize existing skills - NEVER add new ones
+Fix minor formatting inconsistencies (spacing, capitalization)
 
 EXAMPLE - CORRECT TRANSFORMATION:
 ORIGINAL:
@@ -233,10 +235,10 @@ IMPROVED:
 ▸ Framework and Libraries: React Native, Django, Node.js, NestJS, Langchain, MCP
 
 EXAMPLE - FORBIDDEN TRANSFORMATION:
-❌ NEVER DO THIS:
+NEVER DO THIS:
 "• Proficient in programming languages including Python, JavaScript, and TypeScript, with experience in web development frameworks such as React and Django."
 
-🔒 STRUCTURE PRESERVATION PROTOCOL:
+STRUCTURE PRESERVATION PROTOCOL:
 1. Identify the exact formatting pattern in original (bullets, categories, lists)
 2. PRESERVE that exact pattern in improved version
 3. Only clean up spacing, fix typos, improve organization within existing structure
@@ -249,7 +251,7 @@ OUTPUT: Return ONLY the improved skills content maintaining the EXACT structural
             SectionType.EXPERIENCE: f"""
 {self.base_formatting_rules}
 
-💼 EXPERIENCE Section: Company, role, dates, bullet points of achievements
+EXPERIENCE Section: Company, role, dates, bullet points of achievements
    - Only enhance existing bullet points, never add new fake ones
    - Do NOT invent technologies or responsibilities not mentioned
    - Use action verbs and quantify achievements when data exists
@@ -262,23 +264,23 @@ OUTPUT: Return ONLY the improved {SectionType.EXPERIENCE.value} content. No expl
             SectionType.EDUCATION: f"""
 {self.base_formatting_rules}
 
-🎓 CRITICAL EDUCATION FORMATTING RULES - MUST FOLLOW EXACTLY:
+CRITICAL EDUCATION FORMATTING RULES - MUST FOLLOW EXACTLY:
 
-❌ ABSOLUTELY FORBIDDEN:
+ABSOLUTELY FORBIDDEN:
 - Converting course names into "project" descriptions
 - Fabricating project titles from coursework listings
 - Adding achievements not mentioned in original education
 - Creating experience bullets from educational content
 - Turning "Data Structures" coursework into "Data Structures Project"
 
-✅ EDUCATION SECTION REQUIREMENTS:
+EDUCATION SECTION REQUIREMENTS:
 - Institution name, degree, graduation date/timeline
 - GPA if provided in original
 - Relevant coursework AS COURSEWORK (not projects)
 - Honors/awards if mentioned in original
 - Clean, professional educational formatting
 
-🔒 STRUCTURE PRESERVATION FOR EDUCATION:
+STRUCTURE PRESERVATION FOR EDUCATION:
 If original shows:
 California State University, Dominguez Hill Aug 2023 – Dec 2025 (Expected)
 Master of Science in Computer Science, GPA: 3.8 California, US
@@ -289,11 +291,11 @@ THEN OUTPUT MUST MAINTAIN EDUCATIONAL FORMAT:
 Master of Science in Computer Science, Aug 2023 – Dec 2025 (Expected), GPA: 3.8
 - Relevant Coursework: Data Structures, Algorithm Analysis, Object Oriented Analysis
 
-❌ NEVER CONVERT TO PROJECT FORMAT:
+NEVER CONVERT TO PROJECT FORMAT:
 "- Collaborative Project: Led a team of 4 in a Software Project course..."
 "- Data Science Project: Analyzed real-world datasets..."
 
-✅ PROPER EDUCATION ENHANCEMENT:
+PROPER EDUCATION ENHANCEMENT:
 - Clean up formatting and spacing
 - Fix institution name spelling/formatting
 - Organize coursework in clean lists
@@ -307,7 +309,7 @@ OUTPUT: Return ONLY the improved {SectionType.EDUCATION.value} content maintaini
             SectionType.PROJECTS: f"""
 {self.base_formatting_rules}
 
-🛠️ PROJECTS Section: Project name, brief description, technologies used
+PROJECTS Section: Project name, brief description, technologies used
    - Only work with projects explicitly mentioned in original
    - Do NOT add fake projects even if they match job requirements
    - Format: Project Name | Brief Description | Technologies Used
@@ -319,7 +321,6 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
 """
         }
     
-    @judgment.observe(name="resume_analysis_session", span_type="chain")
     async def start_analysis(self, resume_text: str, job_description: str) -> Dict[str, Any]:
         """Start iterative analysis with multiple improvement cycles."""
         session_id = str(uuid4())
@@ -333,7 +334,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         })
         
         try:
-            logger.info(f"🚀 Starting ITERATIVE AGENTIC analysis for session {session_id}")
+            logger.info(f"Analysis session {session_id[:8]} started")
             
             # Parse resume sections
             parsed_sections = await self._parse_resume_sections(resume_text)
@@ -358,7 +359,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 section_key = section_type.value
                 
                 if section_key in parsed_sections and parsed_sections[section_key]["content"].strip():
-                    logger.info(f"🔄 Starting iterative improvement for {section_key}")
+                    logger.info(f"Analyzing {section_key} section")
                     
                     try:
                         analysis = await self._iterative_section_improvement(
@@ -369,10 +370,10 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                         )
                         self.sessions[session_id]["section_analyses"][section_key] = analysis
                         
-                        logger.info(f"✅ Completed iterative analysis for {section_key}: "
+                        logger.info(f"Completed iterative analysis for {section_key}: "
                                   f"{len(analysis.iterations)} iterations, final score: {analysis.final_score}")
                     except Exception as e:
-                        logger.error(f"❌ Error in iterative analysis for {section_key}: {str(e)}")
+                        logger.error(f"Error in iterative analysis for {section_key}: {str(e)}")
                         # Create fallback analysis
                         self.sessions[session_id]["section_analyses"][section_key] = SectionAnalysis(
                             section_type=section_type,
@@ -410,7 +411,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
             }
             
         except Exception as e:
-            logger.error(f"❌ Error starting iterative analysis: {str(e)}")
+            logger.error(f"Error starting iterative analysis: {str(e)}")
             
             # Log analysis error
             monitor.log_error("analysis_error", {
@@ -424,7 +425,6 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 "error": str(e)
             }
     
-    @judgment.observe(name="section_improvement", span_type="chain")
     async def _iterative_section_improvement(
         self,
         content: str,
@@ -446,13 +446,101 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         best_content = content
         best_score = 0
         
-        logger.info(f"🎯 Starting iterative improvement for {section_type.value}")
+        logger.info(f"Starting iterative improvement for {section_type.value}")
         
-        # ITERATION LOOP: Keep improving until we reach excellence
+        # CRITICAL: FABRICATION DETECTION FIRST - Before any LLM improvements
+        logger.info(f"Running fabrication detection for {section_type.value}")
+        try:
+            # Create a job description string from the job analysis
+            job_description_str = f"""
+            Experience Level: {job_analysis.experience_level}
+            Industry: {job_analysis.industry}
+            Role Type: {job_analysis.role_type}
+            Key Technologies: {', '.join(job_analysis.key_technologies)}
+            Requirements: {', '.join(job_analysis.requirements)}
+            Keywords: {', '.join(job_analysis.keywords)}
+            """
+            
+            fabrication_analysis = await self._detect_fabrication_and_clarify(
+                section_type, content, job_description_str
+            )
+            
+            # Analyze fabrication risks more intelligently
+            fabrication_risks = fabrication_analysis.get("fabrication_risks", [])
+            needs_user_input = fabrication_analysis.get("needs_user_input", [])
+            safe_enhancements = fabrication_analysis.get("safe_enhancements", [])
+            
+            # Count critical vs manageable risks
+            critical_risks = [item for item in fabrication_risks if item.get("risk_level") == "high"]
+            manageable_risks = [item for item in fabrication_risks if item.get("risk_level") in ["medium", "low"]]
+            
+            logger.info(f"Fabrication analysis for {section_type.value}: {len(critical_risks)} critical, {len(manageable_risks)} manageable, {len(safe_enhancements)} safe")
+            
+            # Only require clarification for CRITICAL content additions, not formatting
+            if critical_risks and any("content addition" in risk.get("reason", "").lower() or 
+                                    "fabricated" in risk.get("reason", "").lower() 
+                                    for risk in critical_risks):
+                logger.warning(f"Critical fabrication risks detected for {section_type.value} - requesting clarification")
+                
+                # Create clarification request only for serious content fabrication
+                clarification_item = needs_user_input[0] if needs_user_input else {
+                    "category": "content_verification",
+                    "question": f"We need to verify some details for your {section_type.value} section to avoid adding incorrect information. Please confirm any additional skills, achievements, or experiences you have that match the job requirements.",
+                    "context": f"The job description mentions requirements that aren't clearly present in your original {section_type.value} section."
+                }
+                
+                clarification_request = ClarificationRequest(
+                    section_type=section_type,
+                    question=clarification_item["question"],
+                    context=clarification_item["context"],
+                    original_content=content,
+                    reason="Critical fabrication risk - content verification needed",
+                    timestamp=datetime.now()
+                )
+                
+                logger.info(f"Clarification required for {section_type.value}: {clarification_request.question}")
+                
+                # Still apply safe formatting improvements even when clarification is needed
+                safe_improved_content = await self._ensure_proper_formatting(content, section_type)
+                
+                return SectionAnalysis(
+                    section_type=section_type,
+                    original_content=content,
+                    best_content=safe_improved_content,  # Apply safe improvements
+                    iterations=[],
+                    final_score=60,  # Moderate score with safe improvements
+                    improvement_journey="Applied safe formatting improvements. Clarification needed for content enhancements.",
+                    needs_clarification=True,
+                    clarification_request=clarification_request
+                )
+            
+            # If only manageable risks or safe enhancements, proceed with conservative improvements
+            if manageable_risks or safe_enhancements:
+                logger.info(f"Manageable risks detected for {section_type.value} - proceeding with conservative improvements")
+                # Continue with normal flow but be more conservative in content generation
+            
+            logger.info(f"Fabrication check passed for {section_type.value} - proceeding with improvements")
+            
+        except Exception as e:
+            logger.error(f"Fabrication detection failed for {section_type.value}: {str(e)}")
+            # Fail safely - apply conservative approach
+            conservative_content = await self._ensure_proper_formatting(content, section_type)
+            return SectionAnalysis(
+                section_type=section_type,
+                original_content=content,
+                best_content=conservative_content,
+                iterations=[],
+                final_score=70,
+                improvement_journey="Applied conservative improvements due to fabrication detection error.",
+                needs_clarification=False,
+                clarification_request=None
+            )
+        
+        # ITERATION LOOP: Keep improving until we reach excellence (only if fabrication check passed)
         for iteration in range(self.max_iterations):
             perspective = self.perspective_rotation[iteration % len(self.perspective_rotation)]
             
-            logger.info(f"🔄 Iteration {iteration + 1}/{self.max_iterations} - Perspective: {perspective.value}")
+            # Clean iteration logging - only show important progress
             
             try:
                 # STEP 1: Generate improvement from current perspective
@@ -474,7 +562,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 
                 # STEP 3: Handle verification results
                 if not verification_result["is_valid"]:
-                    logger.warning(f"🚫 Iteration {iteration + 1} rejected due to verification issues:")
+                    logger.warning(f"Content rejected - verification issues:")
                     for issue in verification_result["issues"]:
                         logger.warning(f"  - {issue['severity']}: {issue['description']}")
                     
@@ -487,13 +575,13 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                     
                     # If critical issues, try format-preserving cleanup instead
                     if verification_result["recommendation"] == "reject":
-                        logger.info("🔧 Applying format-preserving cleanup instead")
+                        logger.info("Applying format-preserving cleanup instead")
                         improved_content = await self._ensure_proper_formatting(content, section_type)
                         
                         # Re-verify the cleanup
                         cleanup_verification = await self._verify_suggestion_quality(content, improved_content, section_type)
                         if not cleanup_verification["is_valid"]:
-                            logger.warning("🚫 Even format cleanup failed verification - keeping original")
+                            logger.warning("Even format cleanup failed verification - keeping original")
                             improved_content = content
                 
                 # STEP 4: PRIMARY SCORING SYSTEM - Fast agent decision making
@@ -510,7 +598,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                                  5 if issue["severity"] == "high" else 2 
                                  for issue in verification_result["issues"])
                     quality_score = max(1, primary_score - penalty)
-                    logger.info(f"📉 Applied verification penalty: -{penalty} points (final score: {quality_score})")
+                    logger.info(f"Applied verification penalty: -{penalty} points (final score: {quality_score})")
                 
                 # STEP 5: JUDGMENT FRAMEWORK - Comprehensive async evaluation (non-blocking)
                 self._trigger_judgment_evaluation(
@@ -545,11 +633,11 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 if quality_score > best_score:
                     best_content = improved_content
                     best_score = quality_score
-                    logger.info(f"🏆 New best version! Score: {best_score} (with verification)")
+                    logger.info(f"New best version! Score: {best_score} (with verification)")
                 
                 # STEP 9: Check if we've reached excellence (with verification)
                 if quality_score >= self.quality_threshold:
-                    logger.info(f"🎉 Excellence achieved! Score: {quality_score} >= {self.quality_threshold}")
+                    logger.info(f"Excellence achieved! Score: {quality_score} >= {self.quality_threshold}")
                     break
                 
                 # STEP 10: If not excellent, use critique to improve further
@@ -568,7 +656,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                     "iteration": iteration + 1,
                     "error": str(e)
                 })
-                logger.error(f"❌ Error in iteration {iteration + 1}: {str(e)}")
+                logger.error(f"Analysis error: {str(e)}")
                 break
         
         # Generate improvement journey narrative with accurate change detection
@@ -576,7 +664,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         
         # Check if we need format-first improvements regardless of JD requirements
         if best_score < 80 or not iterations:  # If quality is low or no iterations ran
-            logger.info(f"🔧 Applying format-first improvements for {section_type.value}")
+            logger.info(f"Applying format-first improvements for {section_type.value}")
             format_improved = await self._ensure_proper_formatting(content, section_type)
             
             # Check if format improvement actually made changes
@@ -584,7 +672,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
             if format_changes["has_meaningful_changes"]:
                 best_content = format_improved
                 improvement_journey = ". ".join(format_changes["specific_changes"]) + "."
-                logger.info(f"✅ Format-first improvements applied: {improvement_journey}")
+                logger.info(f"Format-first improvements applied: {improvement_journey}")
         
         # Final monitoring log
         monitor.log_agent_action("section_analysis_completed", {
@@ -740,36 +828,36 @@ Elevate this {section_type.value} section to showcase executive potential and ca
         system_prompt = perspective_prompts[perspective]
         
         messages = [
-            {
-                "role": "system",
+                {
+                    "role": "system", 
                 "content": f"""{system_prompt}
 
 ITERATION CONTEXT: This is iteration {iteration}. Build upon any previous improvements while addressing remaining weaknesses.
 
 CRITICAL RESUME FORMATTING RULES:
-🚫 NEVER FABRICATE - Only use information that exists in the original content
-🚫 NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
-🚫 NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
-🚫 NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
+NEVER FABRICATE - Only use information that exists in the original content
+NEVER ADD FAKE SKILLS - Don't mention technologies not in the original
+NEVER INVENT ACHIEVEMENTS - Don't create metrics that weren't provided
+NEVER HALLUCINATE EXPERIENCES - Don't add roles, projects, or accomplishments
 
 SECTION-SPECIFIC FORMATTING STANDARDS:
-📋 SKILLS Section: Keep as bullet points or comma-separated lists, NOT paragraphs
+SKILLS Section: Keep as bullet points or comma-separated lists, NOT paragraphs
    - Only list technologies/tools that are explicitly mentioned in original
    - Do NOT add skills based on job description requirements
    - Do NOT write explanatory sentences about proficiency levels
    - Format: "• Python, JavaScript, React, Node.js" or "Python • JavaScript • React"
 
-🎓 EDUCATION Section: Institution, degree, dates, relevant coursework only
+EDUCATION Section: Institution, degree, dates, relevant coursework only
    - Do NOT add fake projects or achievements not mentioned in original
    - Do NOT fabricate coursework that wasn't listed
    - Do NOT add technologies or skills under education unless they were coursework
    - Format: Institution, Degree, Date, GPA (if provided), Listed Coursework
 
-💼 EXPERIENCE Section: Company, role, dates, bullet points of achievements
+EXPERIENCE Section: Company, role, dates, bullet points of achievements
    - Only enhance existing bullet points, never add new fake ones
    - Do NOT invent technologies or responsibilities not mentioned
 
-🛠️ PROJECTS Section: Project name, brief description, technologies used
+PROJECTS Section: Project name, brief description, technologies used
    - Only work with projects explicitly mentioned in original
    - Do NOT add fake projects even if they match job requirements
 
@@ -805,7 +893,7 @@ OUTPUT: Return ONLY the improved {section_type.value} content. No explanations o
         
         response = await self.client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=messages,
+                messages=messages,
             temperature=0.4,
             max_tokens=2000
         )
@@ -896,8 +984,8 @@ Return ONLY a JSON object:
         weakness_focus = "; ".join(weaknesses[:3])
         
         messages = [
-            {
-                "role": "system",
+                {
+                    "role": "system",
                 "content": f"""You are a perfectionist resume editor focused on addressing specific weaknesses to achieve excellence.
 
 REFINEMENT MISSION: Address these specific weaknesses while preserving all strengths:
@@ -927,7 +1015,7 @@ OUTPUT: Return ONLY the refined {section_type.value} content."""
         
         response = await self.client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=messages,
+                messages=messages,
             temperature=0.3
         )
         
@@ -985,7 +1073,7 @@ OUTPUT: Return ONLY the refined {section_type.value} content."""
         if not needs_formatting:
             return content  # Already well-formatted
         
-        logger.info(f"🔧 Content needs formatting improvements: {', '.join(needs_formatting)}")
+        logger.info(f"Content needs formatting improvements: {', '.join(needs_formatting)}")
         
         # Apply format-first improvements based on section type
         if section_type == SectionType.SKILLS:
@@ -1185,10 +1273,9 @@ OUTPUT: Return ONLY the refined {section_type.value} content."""
         """
         
         fabrication_detection_prompt = f"""
-FABRICATION DETECTION AND CLARIFICATION SYSTEM
+SMART FABRICATION DETECTION SYSTEM
 
-You are a conservative resume enhancement system that NEVER fabricates information.
-Your job is to identify areas where you might be tempted to add content not explicitly present in the original resume.
+You are a balanced resume enhancement system that distinguishes between safe improvements and risky content additions.
 
 ORIGINAL {section_type.value.upper()} CONTENT:
 {original_content}
@@ -1196,17 +1283,28 @@ ORIGINAL {section_type.value.upper()} CONTENT:
 JOB DESCRIPTION REQUIREMENTS:
 {job_description}
 
-DETECTION RULES:
-1. Identify any skills/technologies mentioned in job description but NOT in original content
-2. Detect any potential projects/experiences that could be added but aren't mentioned
-3. Find any quantifiable achievements that could be assumed but aren't stated
-4. Spot any educational details that could be enhanced but aren't provided
+ANALYSIS GUIDELINES:
+1. SAFE IMPROVEMENTS (always allowed):
+   - Formatting and organization improvements
+   - Better wording of existing content
+   - Restructuring existing information
+   - Professional language enhancement
 
-ANALYSIS REQUIRED:
-1. List any items from job description that are missing from original content
-2. For each missing item, determine if it could reasonably be clarified with the user
-3. Generate specific clarification questions for ambiguous areas
-4. Mark items as "SAFE_TO_ENHANCE" (clearly in original) vs "NEEDS_CLARIFICATION" (questionable)
+2. MEDIUM RISK (proceed with caution):
+   - Skills that could reasonably be inferred from existing content
+   - Minor context additions that clarify existing points
+   - Industry-standard terminology for existing concepts
+
+3. HIGH RISK (requires clarification):
+   - Skills/technologies completely absent from original
+   - New projects, achievements, or experiences not mentioned
+   - Specific metrics or numbers not provided in original
+   - Educational details not explicitly stated
+
+SMART CLASSIFICATION:
+- If content can be enhanced through formatting/wording alone → SAFE
+- If job requirements relate to existing content → MEDIUM risk
+- If job requirements are completely new → HIGH risk
 
 OUTPUT FORMAT (JSON):
 {{
@@ -1214,12 +1312,12 @@ OUTPUT FORMAT (JSON):
         {{
             "item": "specific skill/achievement/detail",
             "risk_level": "high|medium|low",
-            "reason": "why this might be fabricated",
-            "clarification_question": "specific question to ask user"
+            "reason": "specific reason for risk level",
+            "clarification_question": "question to ask user"
         }}
     ],
     "safe_enhancements": [
-        "items that can be safely improved from original content"
+        "specific formatting/wording improvements that are always safe"
     ],
     "needs_user_input": [
         {{
@@ -1230,7 +1328,7 @@ OUTPUT FORMAT (JSON):
     ]
 }}
 
-Focus on being EXTREMELY conservative. When in doubt, ask for clarification rather than assuming.
+Be SMART, not just conservative. Focus on what actually needs clarification vs what can be safely improved.
 """
 
         try:
@@ -1246,7 +1344,7 @@ Focus on being EXTREMELY conservative. When in doubt, ask for clarification rath
                 return json.loads(content.strip())
             else:
                 return {"fabrication_risks": [], "safe_enhancements": [], "needs_user_input": []}
-                
+            
         except Exception as e:
             logger.error(f"Error in fabrication detection: {str(e)}")
             # Fail safe - assume everything needs clarification
@@ -1511,7 +1609,7 @@ Focus on being EXTREMELY conservative. When in doubt, ask for clarification rath
             return max(1, min(100, score))
             
         except Exception as e:
-            logger.error(f"❌ Error in primary scoring: {str(e)}")
+            logger.error(f"Error in primary scoring: {str(e)}")
             return 50  # Default neutral score for safety
 
     def _trigger_judgment_evaluation(self, 
@@ -1596,7 +1694,7 @@ Focus on being EXTREMELY conservative. When in doubt, ask for clarification rath
             })
             
         except Exception as e:
-            logger.warning(f"⚠️ Judgment evaluation error (non-critical): {str(e)}")
+            logger.warning(f"Judgment evaluation error (non-critical): {str(e)}")
             # Don't let judgment failures affect the main agent flow
     
     # Continue with other required methods...
@@ -1617,11 +1715,11 @@ Focus on being EXTREMELY conservative. When in doubt, ask for clarification rath
                         "original_type": section_type
                     }
             
-            logger.info(f"✅ Parsed {len(processed_sections)} sections: {list(processed_sections.keys())}")
+            logger.info(f"Parsed {len(processed_sections)} sections: {list(processed_sections.keys())}")
             return processed_sections
             
         except Exception as e:
-            logger.error(f"❌ Error parsing resume sections: {str(e)}")
+            logger.error(f"Error parsing resume sections: {str(e)}")
             return {}
     
     async def _analyze_job_description_comprehensive(self, job_description: str) -> JobAnalysis:
@@ -1674,7 +1772,7 @@ Return ONLY a valid JSON object with these exact keys:
             )
             
         except Exception as e:
-            logger.error(f"❌ Error in job analysis: {str(e)}")
+            logger.error(f"Error in job analysis: {str(e)}")
             return JobAnalysis(
                 keywords=[], requirements=[], experience_level="mid",
                 key_technologies=[], priorities=[], soft_skills=[],
@@ -1700,8 +1798,8 @@ Return ONLY a valid JSON object with these exact keys:
         
         if not section_analysis:
             return {"success": False, "error": f"No analysis found for section {section_type}"}
-        
-        return {
+            
+            return {
             "success": True,
             "analysis": {
                 "section_type": section_analysis.section_type.value,
@@ -1753,7 +1851,7 @@ Return ONLY a valid JSON object with these exact keys:
         session = self.sessions[session_id]
         # Always allow updates to change decisions
         session["accepted_changes"][section_type] = accepted
-        logger.info(f"✅ Section {section_type} changes {'accepted' if accepted else 'rejected'} in session {session_id}")
+        logger.info(f"Section {section_type} changes {'accepted' if accepted else 'rejected'} in session {session_id}")
         
         return {
             "success": True,
@@ -1769,8 +1867,8 @@ Return ONLY a valid JSON object with these exact keys:
         sections = []
         accepted_changes = session.get("accepted_changes", {})
         
-        logger.info(f"🔄 Generating final resume for session {session_id}")
-        logger.info(f"📝 Accepted changes: {accepted_changes}")
+        logger.info(f"Generating final resume for session {session_id}")
+        logger.info(f"Accepted changes: {accepted_changes}")
         
         for section_type, analysis in session.get("section_analyses", {}).items():
             # Determine which content to use based on user decision
@@ -1778,15 +1876,15 @@ Return ONLY a valid JSON object with these exact keys:
                 if accepted_changes[section_type]:
                     # User accepted changes - use improved content
                     content = analysis.best_content or analysis.original_content
-                    logger.info(f"✅ Using improved content for {section_type}")
+                    logger.info(f"Using improved content for {section_type}")
                 else:
                     # User rejected changes - use original content
                     content = analysis.original_content
-                    logger.info(f"⏭️ Using original content for {section_type} (rejected)")
+                    logger.info(f"Using original content for {section_type} (rejected)")
             else:
                 # No decision made - default to original content
                 content = analysis.original_content
-                logger.info(f"🔄 Using original content for {section_type} (no decision)")
+                logger.info(f"Using original content for {section_type} (no decision)")
             
             # Format section with proper header
             section_title = section_type.upper().replace('_', ' ')
@@ -1794,7 +1892,7 @@ Return ONLY a valid JSON object with these exact keys:
         
         final_resume = "\n\n".join(sections)
         
-        logger.info(f"✅ Generated final resume with {len(sections)} sections")
+        logger.info(f"Generated final resume with {len(sections)} sections")
         
         return {
             "success": True,
