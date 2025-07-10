@@ -176,13 +176,31 @@ async def start_analysis(
         # Start analysis session
         result = await resume_agent.start_analysis(cleaned_text, job_description)
         
-        if not result["success"]:
+        # Comprehensive validation of result
+        if not result or not isinstance(result, dict):
+            logger.error("Resume agent returned invalid result")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Failed to start analysis")
+                detail="Analysis failed: Invalid response from agent"
             )
         
-        session_id = result['session_id']
+        if not result.get("success", False):
+            error_message = result.get("error", "Failed to start analysis")
+            logger.error(f"Analysis failed: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_message
+            )
+        
+        # Ensure we have a session ID
+        session_id = result.get('session_id')
+        if not session_id:
+            logger.error("No session ID returned from analysis")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Analysis failed: No session ID generated"
+            )
+        
         sections_count = len(result.get('sections', {}))
         needs_clarification = result.get("needs_clarification", False)
         
@@ -192,19 +210,32 @@ async def start_analysis(
         else:
             logger.info(f"Analysis completed | Session: {session_id[:8]} | {sections_count} sections | No clarifications needed")
         
-        return AnalysisStartResponse(
-            success=True,
-            session_id=result["session_id"],
-            sections=result["sections"],
-            job_analysis=result["job_analysis"],
-            analysis_order=result["analysis_order"],
-            section_analyses=result["section_analyses"],
-            needs_clarification=result["needs_clarification"],
-            pending_clarifications=result.get("pending_clarifications", {}),
-            sections_needing_clarification=result.get("sections_needing_clarification", []),
-            current_section=result["current_section"],
-            progress=result["progress"]
-        )
+        # Safely extract fields with defaults to prevent None values
+        try:
+            response = AnalysisStartResponse(
+                success=True,
+                session_id=session_id,
+                sections=result.get("sections") or {},
+                job_analysis=result.get("job_analysis") or {},
+                analysis_order=result.get("analysis_order") or [],
+                section_analyses=result.get("section_analyses") or {},
+                needs_clarification=needs_clarification,
+                pending_clarifications=result.get("pending_clarifications") or {},
+                sections_needing_clarification=result.get("sections_needing_clarification") or [],
+                current_section=result.get("current_section"),
+                progress=result.get("progress") or "Analysis completed"
+            )
+            
+            logger.info(f"Successfully created response for session {session_id[:8]}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Failed to create response object: {str(e)}")
+            logger.error(f"Result keys: {list(result.keys()) if result else 'None'}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to format response: {str(e)}"
+            )
         
     except HTTPException:
         raise
