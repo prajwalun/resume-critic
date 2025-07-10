@@ -7,7 +7,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org/)
 
-## 🚀 **What is ResumeWise?**
+## **What is ResumeWise?**
 
 ResumeWise is an **agentic AI system** that analyzes and improves resumes through iterative refinement. Unlike simple AI tools, ResumeWise operates as an autonomous agent that:
 
@@ -17,18 +17,18 @@ ResumeWise is an **agentic AI system** that analyzes and improves resumes throug
 - **Learns patterns** from verification failures
 - **Maintains transparency** through comprehensive observability
 
-## 🏗️ **Dual-System Architecture**
+## **Dual-System Architecture**
 
 ResumeWise implements a sophisticated **dual-system approach** that combines speed with insights:
 
-### ⚡ **Primary Scoring System**
+### **Primary Scoring System**
 - **Purpose**: Real-time agent decision making
 - **Speed**: < 1 second per decision
 - **Model**: GPT-4o-mini for efficiency
 - **Function**: Drives accept/retry/clarify logic
 - **Scoring**: Simple 1-100 scale for immediate action
 
-### 🔬 **Judgment Framework Integration**
+### **Judgment Framework Integration**
 - **Purpose**: Comprehensive quality analysis and monitoring
 - **Speed**: 2-5 seconds (runs in parallel)
 - **Model**: GPT-4o for detailed evaluation
@@ -43,10 +43,10 @@ graph TD
     
     C --> E[Fast Decision<br/>< 1 second]
     E --> F{Score ≥ 80?}
-    F -->|Yes| G[✅ Accept]
+    F -->|Yes| G[Accept]
     F -->|No| H{Score ≥ 60?}
-    H -->|Yes| I[🔄 Retry]
-    H -->|No| J[❓ Clarify]
+    H -->|Yes| I[Retry]
+    H -->|No| J[Clarify]
     
     D --> K[Quality Insights<br/>2-5 seconds]
     K --> L[Pattern Detection]
@@ -59,7 +59,7 @@ graph TD
     style K fill:#DDA0DD
 ```
 
-## 🧠 **How the Agent Works**
+## **How the Agent Works**
 
 ### **1. Iterative Improvement Process**
 
@@ -84,11 +84,11 @@ for iteration in range(1, 6):
 ### **2. Multi-Perspective Analysis**
 
 The agent analyzes each section from different viewpoints:
-- 👔 **Hiring Manager**: Focus on job relevance and impact
-- 🔧 **Technical Lead**: Emphasize technical skills and depth
-- 👥 **HR Recruiter**: Optimize for ATS and initial screening
-- 🤖 **ATS Optimizer**: Ensure keyword optimization
-- 🏆 **Industry Expert**: Add domain-specific improvements
+- **Hiring Manager**: Focus on job relevance and impact
+- **Technical Lead**: Emphasize technical skills and depth
+- **HR Recruiter**: Optimize for ATS and initial screening
+- **ATS Optimizer**: Ensure keyword optimization
+- **Industry Expert**: Add domain-specific improvements
 
 ### **3. Quality Verification System**
 
@@ -98,25 +98,25 @@ Every suggestion undergoes rigorous verification:
 - **Format Consistency**: Ensures professional presentation
 - **Length Optimization**: Balances detail with conciseness
 
-## 📊 **Judgment Framework Integration**
+## **Judgment Framework Integration**
 
 ### **Comprehensive Monitoring**
 
 The system tracks everything through the [Judgment Platform](https://platform.judgment.ai):
 
-#### **🔍 Trace Visualization**
+#### **Trace Visualization**
 ```
-📋 resume_analysis_session (52.48s) [$0.002]
-├── 🔧 section_improvement (Skills)
-│   ├── 🤖 OPENAI_API_CALL (3.94s)
-│   ├── 🤖 OPENAI_API_CALL (3.84s) 
+resume_analysis_session (52.48s) [$0.002]
+├── section_improvement (Skills)
+│   ├── OPENAI_API_CALL (3.94s)
+│   ├── OPENAI_API_CALL (3.84s) 
 │   └── ... (5 iterations total)
-├── 🔧 section_improvement (Education)  
-├── 🔧 section_improvement (Experience)
-└── 🔧 section_improvement (Projects)
+├── section_improvement (Education)  
+├── section_improvement (Experience)
+└── section_improvement (Projects)
 ```
 
-#### **📈 Quality Metrics**
+#### **Quality Metrics**
 - **Structure Accuracy** (threshold: 0.8): Professional formatting and organization
 - **Job Relevance** (threshold: 0.6): Alignment with job requirements
 - **Formatting Quality** (threshold: 0.7): ATS compatibility and readability
@@ -124,13 +124,13 @@ The system tracks everything through the [Judgment Platform](https://platform.ju
 - **Clarity & Conciseness** (threshold: 0.7): Clear, impactful communication
 - **Improvement Quality** (threshold: 0.1): Overall enhancement effectiveness
 
-#### **🚨 Pattern Detection**
+#### **Pattern Detection**
 - Automated alerts for unusual behavior (e.g., "5+ failed education suggestions in a row")
 - Error trend analysis and root cause identification
 - Performance degradation monitoring
 - Quality improvement tracking over time
 
-## 🛠️ **Technical Stack**
+## **Technical Stack**
 
 ### **Backend (Python)**
 - **Framework**: FastAPI for high-performance API
@@ -152,7 +152,7 @@ The system tracks everything through the [Judgment Platform](https://platform.ju
 - **Monitoring**: Agent action logging and pattern detection
 - **Analytics**: Performance metrics and cost tracking
 
-## 🚀 **Quick Start**
+## **Quick Start**
 
 ### **1. Setup Backend**
 
@@ -174,7 +174,7 @@ cp .env.example .env
 # JUDGMENT_ORG_ID=your_org_id
 
 # Start server
-python -m uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload
 ```
 
 ### **2. Setup Frontend**
@@ -196,7 +196,7 @@ npm run dev
 - **API Docs**: http://localhost:8000/docs
 - **Judgment Dashboard**: https://platform.judgment.ai
 
-## 🔧 **Configuration**
+## **Configuration**
 
 ### **Environment Variables**
 
@@ -234,7 +234,7 @@ formatting_quality = 0.7
 content_faithfulness = 0.9
 ```
 
-## 📈 **Performance & Monitoring**
+## **Performance & Monitoring**
 
 ### **Expected Performance**
 - **Analysis Time**: 45-60 seconds per resume
@@ -258,7 +258,7 @@ Access comprehensive insights at [platform.judgment.ai](https://platform.judgmen
 - Pattern detection alerts
 - Cost per successful analysis
 
-## 🔒 **Security & Privacy**
+## **Security & Privacy**
 
 - **No Data Storage**: Resume content is processed in memory only
 - **API Security**: All communications use HTTPS
@@ -266,7 +266,7 @@ Access comprehensive insights at [platform.judgment.ai](https://platform.judgmen
 - **Content Verification**: Prevents injection of fabricated information
 - **Audit Trails**: Complete trace of all agent decisions
 
-## 🤝 **Contributing**
+## **Contributing**
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
@@ -277,17 +277,17 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 **License**
+## **License**
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 **Acknowledgments**
+## **Acknowledgments**
 
 - **[Judgment Labs](https://judgment.ai)** for the comprehensive observability platform
 - **OpenAI** for the powerful language models
 - **FastAPI** and **Next.js** communities for excellent frameworks
 
-## 📞 **Support**
+## **Support**
 
 - **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
 - **Documentation**: Check the `/backend/OPTIMIZED_JUDGMENT_INTEGRATION.md` for detailed integration info
@@ -295,4 +295,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ for better resumes and careers** 
+**Built with care for better resumes and careers** 

@@ -60,6 +60,12 @@ class AnalysisStartResponse(BaseModel):
     job_analysis: Optional[Dict[str, Any]] = None
     analysis_order: Optional[List[str]] = None
     section_analyses: Optional[Dict[str, Any]] = None  # Include all section analyses
+    # Enhanced human-in-the-loop fields
+    needs_clarification: Optional[bool] = None
+    pending_clarifications: Optional[Dict[str, Any]] = None  # Multiple clarifications
+    sections_needing_clarification: Optional[List[str]] = None  # List of section names
+    current_section: Optional[str] = None
+    progress: Optional[str] = None
     error: Optional[str] = None
 
 class SectionAnalysisRequest(BaseModel):
@@ -79,6 +85,11 @@ class ClarificationRequest(BaseModel):
 class ClarificationResponse(BaseModel):
     success: bool
     analysis: Optional[Dict[str, Any]] = None
+    # Enhanced clarification response for multiple clarifications
+    session_updated: Optional[bool] = None
+    remaining_clarifications: Optional[List[str]] = None  # Section names still needing clarification
+    needs_more_clarification: Optional[bool] = None
+    clarifications_completed: Optional[bool] = None  # True when all clarifications done
     error: Optional[str] = None
 
 class AcceptChangesRequest(BaseModel):
@@ -89,6 +100,10 @@ class AcceptChangesRequest(BaseModel):
 class AcceptChangesResponse(BaseModel):
     success: bool
     message: Optional[str] = None
+    analysis_continued: Optional[bool] = None
+    remaining_sections: Optional[List[Dict[str, Any]]] = None
+    needs_more_clarification: Optional[bool] = None
+    pending_clarification: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 class FinalResumeRequest(BaseModel):
@@ -175,7 +190,12 @@ async def start_analysis(
             sections=result["sections"],
             job_analysis=result["job_analysis"],
             analysis_order=result["analysis_order"],
-            section_analyses=result["section_analyses"]
+            section_analyses=result["section_analyses"],
+            needs_clarification=result["needs_clarification"],
+            pending_clarifications=result.get("pending_clarifications", {}),
+            sections_needing_clarification=result.get("sections_needing_clarification", []),
+            current_section=result["current_section"],
+            progress=result["progress"]
         )
         
     except HTTPException:
@@ -253,7 +273,11 @@ async def provide_clarification(request: ClarificationRequest):
         
         return ClarificationResponse(
             success=True,
-            analysis=result["analysis"]
+            analysis=result["analysis"],
+            session_updated=result.get("session_updated", False),
+            remaining_clarifications=result.get("remaining_clarifications", []),
+            needs_more_clarification=result.get("needs_more_clarification", False),
+            clarifications_completed=result.get("clarifications_completed", False)
         )
         
     except HTTPException:
@@ -292,7 +316,11 @@ async def accept_changes(request: AcceptChangesRequest):
         
         return AcceptChangesResponse(
             success=True,
-            message=result["message"]
+            message=result["message"],
+            analysis_continued=result.get("analysis_continued", False),
+            remaining_sections=result.get("remaining_sections", []),
+            needs_more_clarification=result.get("needs_more_clarification", False),
+            pending_clarification=result.get("pending_clarification")
         )
         
     except HTTPException:

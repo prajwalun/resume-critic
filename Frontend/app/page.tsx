@@ -111,7 +111,6 @@ export default function ResumeWise() {
   const [jobDescription, setJobDescription] = useState("")
   const [isStarting, setIsStarting] = useState(false)
   const [analysisSession, setAnalysisSession] = useState<AnalysisSession | null>(null)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clarificationModal, setClarificationModal] = useState<ClarificationModal>({
     isOpen: false,
@@ -125,8 +124,8 @@ export default function ResumeWise() {
   const [showFinalResume, setShowFinalResume] = useState(false)
   const [finalResume, setFinalResume] = useState("")
   const [isGeneratingFinal, setIsGeneratingFinal] = useState(false)
-  const [clarificationInput, setClarificationInput] = useState("")
-  const [isSubmittingClarification, setIsSubmittingClarification] = useState(false)
+  const [clarificationInputs, setClarificationInputs] = useState<Record<string, string>>({})
+  const [isSubmittingClarification, setIsSubmittingClarification] = useState<Record<string, boolean>>({})
   
   // New state for undo functionality
   const [undoHistory, setUndoHistory] = useState<Record<string, boolean | null>>({})
@@ -181,10 +180,10 @@ export default function ResumeWise() {
     }
   }
 
-  // 🔍 DEBUG: Monitor analysisSession state changes
+  // DEBUG: Monitor analysisSession state changes
   useEffect(() => {
     if (analysisSession) {
-      console.log("🔄 ANALYSIS SESSION STATE UPDATED:")
+      console.log("Analysis session state updated:")
       console.log("Session ID:", analysisSession.sessionId)
       console.log("Sections keys:", Object.keys(analysisSession.sections))
       console.log("Analysis order:", analysisSession.analysisOrder)
@@ -192,7 +191,7 @@ export default function ResumeWise() {
       
       // Log each section in detail
       Object.entries(analysisSession.sections).forEach(([sectionType, sectionData]) => {
-        console.log(`📄 Session Section ${sectionType}:`)
+        console.log(`Session Section ${sectionType}:`)
         console.log(`  - Type: ${typeof sectionData}`)
         console.log(`  - Keys: ${Object.keys(sectionData)}`)
         console.log(`  - Content length: ${sectionData.content?.length || 0}`)
@@ -201,7 +200,7 @@ export default function ResumeWise() {
         }
       })
     } else {
-      console.log("❌ analysisSession is null/undefined")
+      console.log("ERROR: analysisSession is null/undefined")
     }
   }, [analysisSession])
 
@@ -216,10 +215,10 @@ export default function ResumeWise() {
     setError(null)
 
     try {
-      console.log("🚀 Starting analysis with file:", resumeFile.name)
+      console.log("Starting analysis with file:", resumeFile.name)
       const response = await resumeWiseAPI.startAnalysis(resumeFile, jobDescription)
       
-      // 🔍 COMPREHENSIVE DEBUG: Full response analysis
+      // COMPREHENSIVE DEBUG: Full response analysis
       console.log("=== COMPREHENSIVE DEBUG: API Response ===")
       console.log("Raw response:", response)
       console.log("Response type:", typeof response)
@@ -231,9 +230,9 @@ export default function ResumeWise() {
       
       // Check each section in detail
       if (response.sections) {
-        console.log("📋 SECTION-BY-SECTION ANALYSIS:")
+        console.log("SECTION-BY-SECTION ANALYSIS:")
         Object.entries(response.sections).forEach(([sectionType, sectionData]) => {
-          console.log(`\n🔍 Section: ${sectionType}`)
+          console.log(`\nSection: ${sectionType}`)
           console.log(`  - Type: ${typeof sectionData}`)
           console.log(`  - Keys: ${Object.keys(sectionData as any)}`)
           console.log(`  - Has content field: ${'content' in (sectionData as any)}`)
@@ -242,21 +241,21 @@ export default function ResumeWise() {
           if ((sectionData as any).content) {
             console.log(`  - Content preview: "${(sectionData as any).content.substring(0, 150)}..."`)
         } else {
-            console.log(`  - ❌ NO CONTENT FOUND`)
+            console.log(`  - ERROR: NO CONTENT FOUND`)
           }
         })
       } else {
-        console.log("❌ NO SECTIONS OBJECT IN RESPONSE")
+        console.log("ERROR: NO SECTIONS OBJECT IN RESPONSE")
       }
       
       // Check section analyses
-      console.log("\n📊 SECTION ANALYSES:")
+      console.log("\nSECTION ANALYSES:")
       console.log("Section analyses type:", typeof response.section_analyses)
       console.log("Section analyses keys:", response.section_analyses ? Object.keys(response.section_analyses) : "NO ANALYSES")
       
       if (response.section_analyses) {
         Object.entries(response.section_analyses).forEach(([sectionType, analysis]) => {
-          console.log(`\n📈 Analysis: ${sectionType}`)
+          console.log(`\nAnalysis: ${sectionType}`)
           console.log(`  - Type: ${typeof analysis}`)
           console.log(`  - Keys: ${Object.keys(analysis as any)}`)
           console.log(`  - Original content length: ${(analysis as any).original_content?.length || 0}`)
@@ -285,7 +284,7 @@ export default function ResumeWise() {
           acceptedChanges: {}
         }
         
-        console.log("💾 STORING SESSION DATA:")
+        console.log("STORING SESSION DATA:")
         console.log("Session object:", newSession)
         console.log("Session sections keys:", Object.keys(newSession.sections))
         console.log("Session analyses keys:", Object.keys(newSession.sectionAnalyses))
@@ -294,7 +293,7 @@ export default function ResumeWise() {
         
         // Verify the state was set correctly
         setTimeout(() => {
-          console.log("✅ VERIFICATION: Checking stored state after 100ms")
+          console.log("VERIFICATION: Checking stored state after 100ms")
           // This will be logged after state update
         }, 100)
         
@@ -302,7 +301,7 @@ export default function ResumeWise() {
         setError(response.error || "Failed to start analysis")
       }
     } catch (error) {
-      console.error("💥 ERROR in handleStartAnalysis:", error)
+      console.error("ERROR in handleStartAnalysis:", error)
       if (error instanceof ValidationError) {
         setError(`Invalid input: ${error.message}`)
       } else if (error instanceof APIError) {
@@ -315,58 +314,13 @@ export default function ResumeWise() {
     }
   }
 
-  const handleAnalyzeSection = async (sectionType: string) => {
-    if (!analysisSession) return
 
-    setIsAnalyzing(true)
-    setError(null)
-
-    try {
-      const response = await resumeWiseAPI.analyzeSection(analysisSession.sessionId, sectionType)
-      
-      if (response.success && response.analysis) {
-        const analysis = response.analysis
-        
-        // Update session with analysis
-        setAnalysisSession(prev => ({
-          ...prev!,
-          sectionAnalyses: {
-            ...prev!.sectionAnalyses,
-            [sectionType]: analysis
-          }
-        }))
-
-        // Only show clarification modal if specifically requested AND user response needed
-        if (analysis.needs_clarification && analysis.clarification_request && !analysis.improved_content) {
-    setClarificationModal({
-      isOpen: true,
-            sectionType,
-            question: analysis.clarification_request.question,
-            context: analysis.clarification_request.context,
-            reason: analysis.clarification_request.reason,
-            userResponse: ""
-          })
-        }
-      } else {
-        setError(response.error || "Failed to analyze section")
-      }
-    } catch (error) {
-      if (error instanceof NotFoundError) {
-        setError("Analysis session not found. Please start a new analysis.")
-      } else if (error instanceof APIError) {
-        setError(`Section analysis failed: ${error.message}`)
-      } else {
-        setError("An unexpected error occurred during analysis.")
-      }
-    } finally {
-      setIsAnalyzing(false)
-    }
-  }
 
   const handleSubmitClarification = async () => {
     if (!analysisSession || !clarificationModal.userResponse.trim()) return
 
-    setIsSubmittingClarification(true)
+    const sectionType = clarificationModal.sectionType
+    setIsSubmittingClarification(prev => ({ ...prev, [sectionType]: true }))
 
     try {
       const response = await resumeWiseAPI.provideClarification(
@@ -404,31 +358,135 @@ export default function ResumeWise() {
         setError("An unexpected error occurred during clarification.")
       }
     } finally {
-      setIsSubmittingClarification(false)
+      setIsSubmittingClarification(prev => {
+        const updated = { ...prev }
+        delete updated[sectionType]
+        return updated
+      })
     }
   }
 
   const handleAcceptChanges = async (sectionType: string, accepted: boolean) => {
     if (!analysisSession) return
 
-    // Store previous state for undo
-    const previousState = analysisSession.acceptedChanges[sectionType] ?? null
-    setUndoHistory(prev => ({
-      ...prev,
-      [sectionType]: previousState
-    }))
-
-    // Update current state
-    setAnalysisSession(prev => {
-      if (!prev) return null
-      return {
+    try {
+      console.log(`${accepted ? 'Accepting' : 'Rejecting'} changes for ${sectionType}...`)
+      
+      // Store previous state for undo
+      const previousState = analysisSession.acceptedChanges[sectionType] ?? null
+      setUndoHistory(prev => ({
         ...prev,
-        acceptedChanges: {
-          ...prev.acceptedChanges,
-          [sectionType]: accepted
+        [sectionType]: previousState
+      }))
+
+      // Call backend API to persist the decision
+      const response = await resumeWiseAPI.acceptChanges(analysisSession.sessionId, sectionType, accepted)
+      
+      if (response.success) {
+        // Update local state only after successful backend call
+        setAnalysisSession(prev => {
+          if (!prev) return null
+          
+          const updatedAnalyses = { ...prev.sectionAnalyses }
+          
+          // If accepting and there was a clarification requirement, clear it
+          if (accepted && updatedAnalyses[sectionType]?.needs_clarification) {
+            updatedAnalyses[sectionType] = {
+              ...updatedAnalyses[sectionType],
+              needs_clarification: false,
+              clarification_request: undefined
+            }
+          }
+          
+          return {
+            ...prev,
+            acceptedChanges: {
+              ...prev.acceptedChanges,
+              [sectionType]: accepted
+            },
+            sectionAnalyses: updatedAnalyses
+          }
+        })
+        
+        // Clear any pending clarification input for this section if accepting
+        if (accepted) {
+          setClarificationInputs(prev => {
+            const updated = { ...prev }
+            delete updated[sectionType]
+            return updated
+          })
         }
+        
+        console.log(`✅ Changes ${accepted ? 'accepted' : 'rejected'} for ${sectionType}`)
+        setError(null)
+        
+      } else {
+        console.error(`❌ Failed to ${accepted ? 'accept' : 'reject'} changes for ${sectionType}:`, response.error)
+        setError(response.error || `Failed to ${accepted ? 'accept' : 'reject'} changes`)
       }
-    })
+    } catch (error) {
+      console.error(`Error ${accepted ? 'accepting' : 'rejecting'} changes:`, error)
+      setError(`An error occurred while ${accepted ? 'accepting' : 'rejecting'} changes`)
+    }
+  }
+
+  const handleAcceptSafeChangesOnly = async (sectionType: string) => {
+    if (!analysisSession) return
+
+    try {
+      console.log(`Accepting safe changes for ${sectionType}...`)
+      
+      // Call backend to accept only safe changes (without providing clarification)
+      const response = await resumeWiseAPI.acceptChanges(analysisSession.sessionId, sectionType, true)
+      
+      console.log(`Backend response for ${sectionType}:`, response)
+      
+      if (response.success) {
+        // Update local state to mark as accepted and clear clarification
+        setAnalysisSession(prev => {
+          if (!prev) return null
+          
+          const updatedAnalyses = { ...prev.sectionAnalyses }
+          
+                     // Clear clarification requirement from the analysis if it exists
+           if (updatedAnalyses[sectionType]) {
+             updatedAnalyses[sectionType] = {
+               ...updatedAnalyses[sectionType],
+               needs_clarification: false,
+               clarification_request: undefined
+             }
+           }
+          
+          return {
+            ...prev,
+            acceptedChanges: {
+              ...prev.acceptedChanges,
+              [sectionType]: true
+            },
+            sectionAnalyses: updatedAnalyses
+          }
+        })
+        
+        // Clear any pending clarification input for this section
+        setClarificationInputs(prev => {
+          const updated = { ...prev }
+          delete updated[sectionType]
+          return updated
+        })
+        
+        console.log(`✅ Safe changes accepted for ${sectionType}`)
+        
+        // Show success message briefly
+        setError(null)
+        
+      } else {
+        console.error(`❌ Failed to accept safe changes for ${sectionType}:`, response.error)
+        setError(response.error || "Failed to accept safe changes")
+      }
+    } catch (error) {
+      console.error("Error accepting safe changes:", error)
+      setError("An error occurred while accepting safe changes")
+    }
   }
 
   const handleUndoChanges = (sectionType: string) => {
@@ -503,15 +561,16 @@ export default function ResumeWise() {
   }
 
   const handleClarificationSubmit = async (sectionType: string) => {
-    if (!analysisSession || !clarificationInput.trim()) return
+    const sectionInput = clarificationInputs[sectionType] || ""
+    if (!analysisSession || !sectionInput.trim()) return
 
-    setIsSubmittingClarification(true)
+    setIsSubmittingClarification(prev => ({ ...prev, [sectionType]: true }))
 
     try {
       const response = await resumeWiseAPI.provideClarification(
         analysisSession.sessionId,
         sectionType,
-        clarificationInput
+        sectionInput
       )
 
       if (response.success && response.analysis) {
@@ -522,7 +581,12 @@ export default function ResumeWise() {
             [sectionType]: response.analysis!
           }
         }))
-        setClarificationInput("")
+        // Clear the clarification input for this specific section
+        setClarificationInputs(prev => {
+          const updated = { ...prev }
+          delete updated[sectionType]
+          return updated
+        })
       } else {
         setError(response.error || "Failed to submit clarification")
       }
@@ -533,7 +597,11 @@ export default function ResumeWise() {
         setError("An unexpected error occurred during clarification.")
       }
     } finally {
-      setIsSubmittingClarification(false)
+      setIsSubmittingClarification(prev => {
+        const updated = { ...prev }
+        delete updated[sectionType]
+        return updated
+      })
     }
   }
 
@@ -837,10 +905,15 @@ export default function ResumeWise() {
             {analysisOrder.map((sectionType) => {
               const section = sections[sectionType]
               const analysis = sectionAnalyses[sectionType]
-              const isAccepted = analysisSession.acceptedChanges[sectionType]
-              const isRejected = isAccepted === false
+              const isAccepted = analysisSession.acceptedChanges[sectionType] === true
+              const isRejected = analysisSession.acceptedChanges[sectionType] === false
               const hasUndoHistory = undoHistory[sectionType] !== undefined
               const SectionIcon = SECTION_ICONS[sectionType] || FileText
+              
+              // Debug logging for acceptance status
+              if (isAccepted) {
+                console.log(`DEBUG: Section ${sectionType} showing as accepted. acceptedChanges value:`, analysisSession.acceptedChanges[sectionType])
+              }
               
               const displayScore = analysis ? Math.round(analysis.score / 20) : 0
               
@@ -969,8 +1042,63 @@ export default function ResumeWise() {
                           </div>
                         )}
 
+                        {/* Inline Clarification Input - Show when clarification is needed */}
+                        {analysis.needs_clarification && analysis.clarification_request && (
+                          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 space-y-4">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <HelpCircle className="w-4 h-4 text-white" />
+                              </div>
+                              <div className="flex-1">
+                                <h5 className="text-sm font-medium text-blue-300 mb-2">Additional Information Needed</h5>
+                                <p className="text-blue-200 text-sm leading-relaxed mb-3">
+                                  {analysis.clarification_request.question}
+                                </p>
+                                <Textarea
+                                  value={clarificationInputs[sectionType] || ""}
+                                  onChange={(e) => setClarificationInputs(prev => ({
+                                    ...prev,
+                                    [sectionType]: e.target.value
+                                  }))}
+                                  placeholder="Please provide specific details such as technologies used, achievements, metrics, or additional context..."
+                                  className="min-h-[100px] bg-slate-700/50 border-slate-600/50 text-slate-100 placeholder:text-slate-400 focus:border-blue-500/50 focus:ring-blue-500/20 text-sm resize-none"
+                                  rows={4}
+                                />
+                                <div className="flex items-center gap-2 mt-3">
+                                  <Button
+                                    onClick={() => handleClarificationSubmit(sectionType)}
+                                    disabled={isSubmittingClarification[sectionType] || !(clarificationInputs[sectionType] || "").trim()}
+                                    size="sm"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-xs px-4 py-2"
+                                  >
+                                    {isSubmittingClarification[sectionType] ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                        Processing...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Check className="w-3 h-3 mr-1" />
+                                        Submit Details
+                                      </>
+                                    )}
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleAcceptSafeChangesOnly(sectionType)}
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-slate-600/30 text-slate-400 hover:bg-slate-700/30 text-xs px-3 py-2"
+                                  >
+                                    Accept Safe Changes Only
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Action Buttons - Clean and Minimal */}
-                        {improvedContent && (
+                        {improvedContent && !analysis.needs_clarification && (
                           <div className="flex gap-2 pt-3 border-t border-slate-600/20">
                             <Button
                               onClick={() => handleAcceptChanges(sectionType, true)}

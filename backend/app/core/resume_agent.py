@@ -168,6 +168,9 @@ class IterativeResumeAgent:
             SectionType.PROJECTS
         ]
         
+        # Store original job description to prevent false positive clarification triggers
+        self.original_job_description: str = ""
+        
         # Common formatting rules
         self.base_formatting_rules = """
 CRITICAL RESUME FORMATTING RULES:
@@ -251,11 +254,27 @@ OUTPUT: Return ONLY the improved skills content maintaining the EXACT structural
             SectionType.EXPERIENCE: f"""
 {self.base_formatting_rules}
 
-EXPERIENCE Section: Company, role, dates, bullet points of achievements
-   - Only enhance existing bullet points, never add new fake ones
-   - Do NOT invent technologies or responsibilities not mentioned
-   - Use action verbs and quantify achievements when data exists
-   - Format: Company | Role | Dates, then bullet points of accomplishments
+CRITICAL EXPERIENCE FORMATTING RULES - MUST FOLLOW EXACTLY:
+
+ABSOLUTELY FORBIDDEN IN EXPERIENCE SECTION:
+- Adding percentage improvements not mentioned in original (e.g., "50% increase", "30% reduction")
+- Creating specific metrics not provided by user (e.g., "reduced latency by 10%", "improved efficiency by 25%")
+- Inventing business outcomes not stated (e.g., "increased revenue", "saved costs")
+- Adding achievements with numbers not in original content
+- Creating impact statements without user's data (e.g., "resulting in better performance")
+
+EXPERIENCE ENHANCEMENT REQUIREMENTS:
+- Only improve wording of existing bullet points - never add new ones
+- Do NOT invent technologies, tools, or responsibilities not mentioned in original
+- Use stronger action verbs for existing content only
+- Do NOT add metrics, percentages, or specific achievements not provided by user
+- Format: Company | Role | Dates, then enhanced existing bullet points only
+
+SAFE EXPERIENCE IMPROVEMENTS:
+- Better action verbs for existing responsibilities (e.g., "worked on" → "developed")
+- Professional language for existing achievements
+- Clearer structure and formatting of existing content
+- Remove redundancy and improve clarity of existing points
 
 {self.conservative_rules}
 
@@ -322,69 +341,46 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         }
     
     async def start_analysis(self, resume_text: str, job_description: str) -> Dict[str, Any]:
-        """Start iterative analysis with multiple improvement cycles."""
+        """
+        Start iterative resume analysis session with human-in-the-loop workflow.
+        Now properly stops when clarification is needed instead of processing everything.
+        """
         session_id = str(uuid4())
         
-        # Log analysis start for monitoring
-        monitor.log_agent_action("analysis_started", {
-            "session_id": session_id,
-            "resume_length": len(resume_text),
-            "job_description_length": len(job_description),
-            "timestamp": datetime.now().isoformat()
-        })
+        # Store original job description to prevent false positive clarification triggers
+        self.original_job_description = job_description
         
         try:
-            logger.info(f"Analysis session {session_id[:8]} started")
-            
             # Parse resume sections
             parsed_sections = await self._parse_resume_sections(resume_text)
+            if not parsed_sections:
+                return {"success": False, "error": "Failed to parse resume sections"}
             
-            # Comprehensive job analysis
+            # Analyze job description  
             job_analysis = await self._analyze_job_description_comprehensive(job_description)
             
-            # Initialize session with accepted changes tracking
+            # Initialize session with pending analysis
             self.sessions[session_id] = {
-                "id": session_id,
                 "resume_text": resume_text,
                 "job_description": job_description,
-                "job_analysis": job_analysis,
                 "sections": parsed_sections,
+                "job_analysis": job_analysis,
                 "section_analyses": {},
-                "accepted_changes": {},  # Track accepted/rejected changes per section
-                "created_at": datetime.now().isoformat(),
+                "accepted_changes": {},
+                "current_section_index": 0,  # Track progress
+                "needs_clarification": False,
+                "pending_clarification": None,
+                "created_at": datetime.now().isoformat()
             }
             
-            # ITERATIVE ANALYSIS: Process each section through multiple improvement cycles
-            for section_type in self.analysis_order:
-                section_key = section_type.value
-                
-                if section_key in parsed_sections and parsed_sections[section_key]["content"].strip():
-                    logger.info(f"Analyzing {section_key} section")
-                    
-                    try:
-                        analysis = await self._iterative_section_improvement(
-                            parsed_sections[section_key]["content"],
-                            section_type,
-                            job_analysis,
-                            parsed_sections
-                        )
-                        self.sessions[session_id]["section_analyses"][section_key] = analysis
-                        
-                        logger.info(f"Completed iterative analysis for {section_key}: "
-                                  f"{len(analysis.iterations)} iterations, final score: {analysis.final_score}")
-                    except Exception as e:
-                        logger.error(f"Error in iterative analysis for {section_key}: {str(e)}")
-                        # Create fallback analysis
-                        self.sessions[session_id]["section_analyses"][section_key] = SectionAnalysis(
-                            section_type=section_type,
-                            original_content=parsed_sections[section_key]["content"],
-                            best_content=None,
-                            iterations=[],
-                            final_score=50,
-                            improvement_journey="Iterative analysis temporarily unavailable.",
-                            needs_clarification=False,
-                            clarification_request=None
-                        )
+            logger.info(f"Iterative analysis session {session_id[:8]} started - {len(parsed_sections)} sections identified")
+            
+            # HUMAN-IN-THE-LOOP: Process sections one by one, stopping for clarification
+            analysis_results = await self._process_sections_with_clarification_support(
+                session_id, 
+                parsed_sections, 
+                job_analysis
+            )
             
             return {
                 "success": True,
@@ -392,22 +388,12 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 "sections": parsed_sections,
                 "job_analysis": job_analysis.__dict__,
                 "analysis_order": [section.value for section in self.analysis_order],
-                "section_analyses": {
-                    section_type: {
-                        "section_type": analysis.section_type.value,
-                        "original_content": analysis.original_content,
-                        "improved_content": analysis.best_content,
-                        "score": analysis.final_score,
-                        "feedback": analysis.improvement_journey,
-                        "iteration_count": len(analysis.iterations),
-                        "needs_clarification": analysis.needs_clarification,
-                        "clarification_request": {
-                            "question": analysis.clarification_request.question,
-                            "context": analysis.clarification_request.context,
-                            "reason": analysis.clarification_request.reason
-                        } if analysis.clarification_request else None
-                    } for section_type, analysis in self.sessions[session_id]["section_analyses"].items()
-                }
+                "section_analyses": analysis_results["completed_analyses"],
+                "needs_clarification": analysis_results["needs_clarification"],
+                "pending_clarifications": analysis_results.get("pending_clarifications", {}),
+                "sections_needing_clarification": analysis_results.get("sections_needing_clarification", []),
+                "current_section": analysis_results["current_section"],
+                "progress": analysis_results["progress"]
             }
             
         except Exception as e:
@@ -424,6 +410,136 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                 "success": False,
                 "error": str(e)
             }
+    
+    async def _process_sections_with_clarification_support(
+        self, 
+        session_id: str, 
+        parsed_sections: Dict[str, Dict[str, Any]], 
+        job_analysis: JobAnalysis
+    ) -> Dict[str, Any]:
+        """
+        Process ALL sections with proper human-in-the-loop support.
+        CONTINUES analyzing all sections even when clarification is needed.
+        """
+        completed_analyses = {}
+        pending_clarifications = {}
+        session = self.sessions[session_id]
+        sections_needing_clarification = []
+        
+        # Process ALL sections, collecting clarifications as needed
+        for i, section_type in enumerate(self.analysis_order):
+            section_key = section_type.value
+            session["current_section_index"] = i
+            
+            if section_key in parsed_sections and parsed_sections[section_key]["content"].strip():
+                logger.info(f"Processing {section_key} section (step {i+1}/{len(self.analysis_order)})")
+                
+                try:
+                    analysis = await self._iterative_section_improvement(
+                        parsed_sections[section_key]["content"],
+                        section_type,
+                        job_analysis,
+                        parsed_sections
+                    )
+                
+                    # Check if this section needs clarification (but DON'T stop!)
+                    if analysis.needs_clarification and analysis.clarification_request:
+                        logger.warning(f"Clarification needed for {section_key} - continuing with other sections")
+                        
+                        # Store clarification request for this section
+                        pending_clarifications[section_key] = {
+                            "section_type": section_key,
+                            "question": analysis.clarification_request.question,
+                            "context": analysis.clarification_request.context,
+                            "reason": analysis.clarification_request.reason,
+                            "original_content": analysis.clarification_request.original_content
+                        }
+                        sections_needing_clarification.append(section_key)
+                        
+                        # CRITICAL FIX: Store analysis in BOTH places to ensure it appears in final resume
+                        session["section_analyses"][section_key] = analysis  # Store SectionAnalysis object
+                        completed_analyses[section_key] = {  # Store dict representation for API
+                            "section_type": analysis.section_type.value,
+                            "original_content": analysis.original_content,
+                            "improved_content": analysis.best_content,  # Safe improvements only
+                            "score": analysis.final_score,
+                            "feedback": analysis.improvement_journey,
+                            "iteration_count": len(analysis.iterations),
+                            "needs_clarification": True,
+                            "clarification_request": {
+                                "question": analysis.clarification_request.question,
+                                "context": analysis.clarification_request.context,
+                                "reason": analysis.clarification_request.reason
+                            }
+                        }
+                        
+                        # Log clarification request
+                        monitor.log_user_clarification(section_key, analysis.clarification_request.question)
+                    
+                    else:
+                        # No clarification needed, save analysis and continue
+                        session["section_analyses"][section_key] = analysis
+                        completed_analyses[section_key] = {
+                            "section_type": analysis.section_type.value,
+                            "original_content": analysis.original_content,
+                            "improved_content": analysis.best_content,
+                            "score": analysis.final_score,
+                            "feedback": analysis.improvement_journey,
+                            "iteration_count": len(analysis.iterations),
+                            "needs_clarification": False,
+                            "clarification_request": None
+                        }
+                        
+                        logger.info(f"Completed {section_key}: {len(analysis.iterations)} iterations, score: {analysis.final_score}")
+            
+                except Exception as e:
+                    logger.error(f"Error processing {section_key}: {str(e)}")
+                    # Create fallback analysis and continue - ENSURE both storages are updated
+                    fallback_analysis = SectionAnalysis(
+                        section_type=section_type,
+                        original_content=parsed_sections[section_key]["content"],
+                        best_content=parsed_sections[section_key]["content"],  # Use original as fallback
+                        iterations=[],
+                        final_score=50,
+                        improvement_journey=f"Analysis temporarily unavailable: {str(e)}",
+                        needs_clarification=False,
+                        clarification_request=None
+                    )
+                    
+                    # Store in BOTH places
+                    session["section_analyses"][section_key] = fallback_analysis
+                    completed_analyses[section_key] = {
+                        "section_type": section_type.value,
+                        "original_content": parsed_sections[section_key]["content"],
+                        "improved_content": parsed_sections[section_key]["content"],  # Use original as fallback
+                        "score": 50,
+                        "feedback": f"Analysis temporarily unavailable: {str(e)}",
+                        "iteration_count": 0,
+                        "needs_clarification": False,
+                        "clarification_request": None
+                    }
+        
+        # Update session state
+        has_clarifications = len(pending_clarifications) > 0
+        session["needs_clarification"] = has_clarifications
+        session["pending_clarifications"] = pending_clarifications  # Store multiple clarifications
+        session["current_section_index"] = len(self.analysis_order)  # Mark as completed
+        
+        if has_clarifications:
+            logger.info(f"Analysis completed - {len(sections_needing_clarification)} sections need clarification: {', '.join(sections_needing_clarification)}")
+            progress_msg = f"Analysis complete - {len(sections_needing_clarification)} section(s) need clarification"
+        else:
+            logger.info("Analysis completed - no clarifications needed")
+            progress_msg = f"{len(self.analysis_order)}/{len(self.analysis_order)} - All sections completed"
+            
+        return {
+            "completed_analyses": completed_analyses,
+            "needs_clarification": has_clarifications,
+            "pending_clarifications": pending_clarifications,  # Multiple clarifications
+            "sections_needing_clarification": sections_needing_clarification,
+            "current_section": "completed",
+            "progress": progress_msg
+        }
     
     async def _iterative_section_improvement(
         self,
@@ -451,18 +567,11 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
         # CRITICAL: FABRICATION DETECTION FIRST - Before any LLM improvements
         logger.info(f"Running fabrication detection for {section_type.value}")
         try:
-            # Create a job description string from the job analysis
-            job_description_str = f"""
-            Experience Level: {job_analysis.experience_level}
-            Industry: {job_analysis.industry}
-            Role Type: {job_analysis.role_type}
-            Key Technologies: {', '.join(job_analysis.key_technologies)}
-            Requirements: {', '.join(job_analysis.requirements)}
-            Keywords: {', '.join(job_analysis.keywords)}
-            """
+            # FIXED: Use ORIGINAL job description instead of expanded analysis
+            # This prevents false positive clarification triggers from inferred requirements
             
             fabrication_analysis = await self._detect_fabrication_and_clarify(
-                section_type, content, job_description_str
+                section_type, content, self.original_job_description
             )
             
             # Analyze fabrication risks more intelligently
@@ -476,32 +585,52 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
             
             logger.info(f"Fabrication analysis for {section_type.value}: {len(critical_risks)} critical, {len(manageable_risks)} manageable, {len(safe_enhancements)} safe")
             
-            # Only require clarification for CRITICAL content additions, not formatting
-            if critical_risks and any("content addition" in risk.get("reason", "").lower() or 
-                                    "fabricated" in risk.get("reason", "").lower() 
-                                    for risk in critical_risks):
-                logger.warning(f"Critical fabrication risks detected for {section_type.value} - requesting clarification")
+            # ENHANCED CLARIFICATION TRIGGER: Check if clarification is needed
+            # Simply check if we have high-risk fabrication items
+            fabrication_detected = len(critical_risks) > 0
+            
+            # TRIGGER CLARIFICATION: If fabrication risks detected
+            if fabrication_detected:
+                logger.warning(f"Clarification needed for {section_type.value}: Fabrication risks detected")
                 
-                # Create clarification request only for serious content fabrication
-                clarification_item = needs_user_input[0] if needs_user_input else {
-                    "category": "content_verification",
-                    "question": f"We need to verify some details for your {section_type.value} section to avoid adding incorrect information. Please confirm any additional skills, achievements, or experiences you have that match the job requirements.",
-                    "context": f"The job description mentions requirements that aren't clearly present in your original {section_type.value} section."
-                }
+                # INTELLIGENT GAP ANALYSIS - Generate specific, targeted clarification questions
+                clarification_item = await self._generate_intelligent_clarification(
+                    section_type, content, job_analysis, self.original_job_description
+                )
                 
                 clarification_request = ClarificationRequest(
                     section_type=section_type,
                     question=clarification_item["question"],
                     context=clarification_item["context"],
                     original_content=content,
-                    reason="Critical fabrication risk - content verification needed",
+                    reason="Fabrication prevention - user input needed for accurate enhancement",
                     timestamp=datetime.now()
                 )
                 
-                logger.info(f"Clarification required for {section_type.value}: {clarification_request.question}")
+                logger.info(f"Clarification required for {section_type.value}: {clarification_request.question[:100]}...")
                 
-                # Still apply safe formatting improvements even when clarification is needed
+                # Apply only safe formatting improvements while waiting for clarification
                 safe_improved_content = await self._ensure_proper_formatting(content, section_type)
+                
+                # Detect what specific improvements were made
+                changes_detected = self._detect_actual_changes(content, safe_improved_content)
+                
+                # Generate specific feedback based on what was actually improved
+                if changes_detected["has_meaningful_changes"]:
+                    improvement_details = ", ".join(changes_detected["specific_changes"])
+                    section_specific_feedback = f"Applied safe improvements: {improvement_details}. "
+                else:
+                    section_specific_feedback = "Content reviewed for formatting. "
+                
+                # Add section-specific clarification guidance
+                section_guidance = {
+                    SectionType.SKILLS: "To enhance this section, please specify additional technical skills, frameworks, or tools you've used.",
+                    SectionType.EXPERIENCE: "To enhance this section, please provide specific achievements, metrics, team sizes, or technologies used in your roles.",
+                    SectionType.PROJECTS: "To enhance this section, please share project outcomes, technologies used, team collaboration details, or measurable results.",
+                    SectionType.EDUCATION: "To enhance this section, please mention relevant coursework, projects, achievements, or additional certifications."
+                }.get(section_type, "To enhance this section, please provide additional relevant details.")
+                
+                full_feedback = section_specific_feedback + section_guidance
                 
                 return SectionAnalysis(
                     section_type=section_type,
@@ -509,7 +638,7 @@ OUTPUT: Return ONLY the improved {SectionType.PROJECTS.value} content. No explan
                     best_content=safe_improved_content,  # Apply safe improvements
                     iterations=[],
                     final_score=60,  # Moderate score with safe improvements
-                    improvement_journey="Applied safe formatting improvements. Clarification needed for content enhancements.",
+                    improvement_journey=full_feedback,
                     needs_clarification=True,
                     clarification_request=clarification_request
                 )
@@ -874,7 +1003,7 @@ TRANSFORMATION REQUIREMENTS:
 4. PROFESSIONAL LANGUAGE - Use industry-appropriate terminology and action verbs
 5. PROPER FORMATTING - Maintain section-appropriate structure (bullets vs paragraphs)
 6. KEYWORD OPTIMIZATION - Only integrate keywords that can be naturally applied to existing content
-7. QUANTIFY WHEN POSSIBLE - If metrics exist, highlight them; if not, don't invent them
+7. NEVER ADD METRICS - Do not add percentages, numbers, or achievement claims not in original content
 
 CONSERVATIVE ENHANCEMENT APPROACH:
 - If uncertain about adding details, ask for clarification instead of guessing
@@ -1266,6 +1395,210 @@ OUTPUT: Return ONLY the refined {section_type.value} content."""
         
         return response.choices[0].message.content.strip()
     
+    async def _generate_intelligent_clarification(
+        self, 
+        section_type: SectionType, 
+        resume_content: str, 
+        job_analysis: JobAnalysis, 
+        job_description: str
+    ) -> dict:
+        """
+        Generate intelligent, gap-aware clarification questions based on analysis of
+        what's missing between resume content and job requirements.
+        """
+        
+        # Create section-specific gap analysis prompt
+        system_prompt = f"""
+You are an expert resume analyst. Analyze the gap between the resume content and job requirements for the {section_type.value} section.
+
+RESUME {section_type.value.upper()} CONTENT:
+{resume_content}
+
+JOB DESCRIPTION:
+{job_description}
+
+JOB ANALYSIS:
+- Key Technologies: {', '.join(job_analysis.key_technologies[:10])}
+- Requirements: {', '.join(job_analysis.requirements[:5])}
+- Hard Skills: {', '.join(job_analysis.hard_skills[:10])}
+
+TASK: Identify specific gaps and generate 1-3 targeted clarification questions.
+
+SECTION-SPECIFIC ANALYSIS:
+"""
+
+        if section_type == SectionType.SKILLS:
+            system_prompt += """
+For SKILLS section:
+1. Compare resume technologies with job requirements
+2. Identify missing but relevant technologies, frameworks, tools
+3. Look for skill categories that could be enhanced
+4. Ask specific questions about missing technologies the user might have
+
+Example good questions:
+- "The job emphasizes React and Node.js, but I only see basic JavaScript listed. Do you have experience with React or Node.js that we should include?"
+- "The role requires cloud platforms (AWS/Azure). Have you worked with any cloud services in your projects?"
+
+AVOID generic questions like "do you have any other skills?"
+"""
+        elif section_type == SectionType.EXPERIENCE:
+            system_prompt += """
+For EXPERIENCE section:
+1. Look for missing metrics, achievements, or quantifiable results
+2. Check if technologies mentioned in job are reflected in experience
+3. Identify roles that could be enhanced with specific outcomes
+4. Ask about missing technologies used in projects
+
+Example good questions:
+- "In your Software Engineer role, you mention building applications but don't specify the impact. Can you provide metrics like user growth, performance improvements, or team size?"
+- "The job requires Docker and CI/CD experience. Did you use these technologies in any of your roles?"
+
+AVOID generic questions like "tell us about your achievements"
+"""
+        elif section_type == SectionType.PROJECTS:
+            system_prompt += """
+For PROJECTS section:
+1. Look for missing outcomes, results, or impact metrics
+2. Check if project technologies align with job requirements
+3. Identify projects lacking technical depth
+4. Ask about specific results or technologies used
+
+Example good questions:
+- "Your e-commerce project sounds impressive, but what were the specific results? (e.g., reduced load time by X%, supported Y users, etc.)"
+- "The job requires experience with databases. Which database technologies did you use in your projects?"
+
+AVOID generic questions like "tell us more about your projects"
+"""
+        elif section_type == SectionType.EDUCATION:
+            system_prompt += """
+For EDUCATION section:
+1. Look for missing relevant coursework related to job requirements
+2. Check for missing projects, achievements, or certifications
+3. Identify opportunities to highlight relevant academic work
+
+Example good questions:
+- "The job emphasizes operating systems and networking. Did you take any relevant courses or complete projects in these areas during your studies?"
+- "Did you complete any notable projects, research, or achieve academic recognition that would strengthen your candidacy?"
+
+AVOID generic questions like "tell us about your education"
+"""
+
+        system_prompt += """
+
+OUTPUT FORMAT:
+Return a JSON object with:
+{
+  "category": "gap_analysis",
+  "question": "Specific, actionable question(s) based on identified gaps",
+  "context": "Brief explanation of why this information is needed",
+  "specific_gaps": ["list", "of", "specific", "missing", "items"]
+}
+
+Make questions specific, helpful, and focused on real gaps between resume and job requirements.
+"""
+
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Analyze the {section_type.value} section and generate specific clarification questions based on gaps with job requirements."}
+                ],
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            content = response.choices[0].message.content.strip()
+            
+            # Clean the response to extract JSON - remove common prefixes
+            cleaned_content = content
+            if content.lower().startswith('json'):
+                cleaned_content = content[4:].strip()
+            if cleaned_content.startswith('```json'):
+                cleaned_content = cleaned_content[7:]
+            if cleaned_content.endswith('```'):
+                cleaned_content = cleaned_content[:-3]
+            cleaned_content = cleaned_content.strip()
+            
+            # Try to parse JSON response
+            try:
+                import json
+                clarification_data = json.loads(cleaned_content)
+                logger.info(f"Generated intelligent clarification for {section_type.value}: {clarification_data['question'][:100]}...")
+                return clarification_data
+            except json.JSONDecodeError as e:
+                # Enhanced fallback - try to extract question from malformed JSON
+                logger.warning(f"Failed to parse clarification JSON for {section_type.value}: {str(e)}")
+                logger.warning(f"Raw content: {content[:200]}...")
+                
+                # Try to extract a reasonable question from the content
+                if '"question":' in content:
+                    try:
+                        # Extract the question value from the malformed JSON
+                        question_start = content.find('"question":') + 11
+                        question_content = content[question_start:].strip()
+                        if question_content.startswith('"'):
+                            question_end = question_content.find('"', 1)
+                            if question_end > 0:
+                                extracted_question = question_content[1:question_end]
+                                return {
+                                    "category": "gap_analysis",
+                                    "question": extracted_question,
+                                    "context": f"Analysis suggests gaps between your {section_type.value} and job requirements.",
+                                    "specific_gaps": []
+                                }
+                    except Exception:
+                        pass
+                
+                # Final fallback to section-specific questions
+                fallback_questions = {
+                    SectionType.SKILLS: "The job description mentions specific technologies that aren't clearly reflected in your skills section. Could you clarify which of these technologies you have experience with?",
+                    SectionType.EXPERIENCE: "Your experience section could be strengthened with specific achievements or metrics. Can you provide quantifiable results from your roles?",
+                    SectionType.PROJECTS: "Your projects would benefit from specific outcomes or technical details. Can you share results, technologies used, or measurable impact?",
+                    SectionType.EDUCATION: "Are there relevant courses, projects, or achievements from your education that align with this job's requirements?"
+                }
+                
+                return {
+                    "category": "gap_analysis",
+                    "question": fallback_questions.get(section_type, f"Could you provide additional details about your {section_type.value} that might be relevant to this position?"),
+                    "context": f"Analysis suggests gaps between your {section_type.value} and job requirements.",
+                    "specific_gaps": []
+                }
+                
+        except Exception as e:
+            logger.error(f"Error generating intelligent clarification for {section_type.value}: {str(e)}")
+            # Fallback to section-specific defaults
+            fallback_questions = {
+                SectionType.SKILLS: {
+                    "question": "The job description mentions specific technologies that aren't clearly reflected in your skills section. Could you clarify which of these technologies you have experience with?",
+                    "context": "Ensuring accurate representation of your technical capabilities"
+                },
+                SectionType.EXPERIENCE: {
+                    "question": "Your experience section could be strengthened with specific achievements or metrics. Can you provide quantifiable results from your roles?",
+                    "context": "Adding measurable impact to demonstrate your contributions"
+                },
+                SectionType.PROJECTS: {
+                    "question": "Your projects would benefit from specific outcomes or technical details. Can you share results, technologies used, or measurable impact?",
+                    "context": "Highlighting the technical depth and impact of your work"
+                },
+                SectionType.EDUCATION: {
+                    "question": "Are there relevant courses, projects, or achievements from your education that align with this job's requirements?",
+                    "context": "Showcasing relevant academic background for the role"
+                }
+            }
+            
+            default = fallback_questions.get(section_type, {
+                "question": f"Could you provide additional details about your {section_type.value} that might be relevant to this position?",
+                "context": "Gathering additional relevant information"
+            })
+            
+            return {
+                "category": "gap_analysis",
+                "question": default["question"],
+                "context": default["context"],
+                "specific_gaps": []
+            }
+    
     async def _detect_fabrication_and_clarify(self, section_type: SectionType, original_content: str, job_description: str) -> dict:
         """
         Detect potential fabrication opportunities and generate clarification questions
@@ -1273,9 +1606,9 @@ OUTPUT: Return ONLY the refined {section_type.value} content."""
         """
         
         fabrication_detection_prompt = f"""
-SMART FABRICATION DETECTION SYSTEM
+CRITICAL FABRICATION DETECTION SYSTEM
 
-You are a balanced resume enhancement system that distinguishes between safe improvements and risky content additions.
+You are a strict resume enhancement system that prevents misleading information from being added.
 
 ORIGINAL {section_type.value.upper()} CONTENT:
 {original_content}
@@ -1283,60 +1616,67 @@ ORIGINAL {section_type.value.upper()} CONTENT:
 JOB DESCRIPTION REQUIREMENTS:
 {job_description}
 
-ANALYSIS GUIDELINES:
-1. SAFE IMPROVEMENTS (always allowed):
+FABRICATION DETECTION PRIORITIES:
+1. CRITICAL FABRICATION RISKS (ALWAYS requires clarification):
+   - Any percentage claims not in original (e.g., "50% increase", "30% improvement")
+   - Specific numeric achievements not mentioned (e.g., "reduced latency by 10%")
+   - Impact metrics not provided by user (e.g., "increased efficiency", "improved performance")
+   - Technologies/skills completely absent from original content
+   - Projects, roles, or experiences not mentioned
+   - Specific company achievements or business outcomes not stated
+
+2. SAFE IMPROVEMENTS (always allowed):
    - Formatting and organization improvements
-   - Better wording of existing content
+   - Better wording of existing content (without adding claims)
    - Restructuring existing information
    - Professional language enhancement
+   - Grammar and clarity improvements
 
-2. MEDIUM RISK (proceed with caution):
-   - Skills that could reasonably be inferred from existing content
-   - Minor context additions that clarify existing points
-   - Industry-standard terminology for existing concepts
+3. MEDIUM RISK (proceed with extreme caution):
+   - Minor context that doesn't add claims or metrics
+   - Industry-standard terminology for clearly existing concepts
 
-3. HIGH RISK (requires clarification):
-   - Skills/technologies completely absent from original
-   - New projects, achievements, or experiences not mentioned
-   - Specific metrics or numbers not provided in original
-   - Educational details not explicitly stated
+SPECIFIC METRIC FABRICATION DETECTION:
+- Look for: percentages (%), numbers with impact claims, business metrics, performance improvements
+- If ANY metric, percentage, or specific achievement number appears in job requirements but NOT in original content → HIGH RISK
+- If user didn't provide specific outcomes, don't invent them
 
-SMART CLASSIFICATION:
-- If content can be enhanced through formatting/wording alone → SAFE
-- If job requirements relate to existing content → MEDIUM risk
-- If job requirements are completely new → HIGH risk
+CONSERVATIVE ANALYSIS REQUIRED:
+- If job description asks for "improved performance" but original doesn't mention specific improvements → CLARIFICATION NEEDED
+- If job mentions "reduced costs" but original has no cost reduction claims → CLARIFICATION NEEDED  
+- If job wants "increased efficiency" but original lacks efficiency metrics → CLARIFICATION NEEDED
 
 OUTPUT FORMAT (JSON):
 {{
     "fabrication_risks": [
         {{
-            "item": "specific skill/achievement/detail",
+            "item": "specific metric/achievement/detail that would be fabricated",
             "risk_level": "high|medium|low",
-            "reason": "specific reason for risk level",
-            "clarification_question": "question to ask user"
+            "reason": "why this is fabrication risk (be specific about metrics/percentages)",
+            "clarification_question": "ask user for specific details needed"
         }}
     ],
     "safe_enhancements": [
-        "specific formatting/wording improvements that are always safe"
+        "specific formatting/wording improvements that add NO new claims"
     ],
     "needs_user_input": [
         {{
-            "category": "skills|experience|education|projects",
-            "question": "specific clarification question",
-            "context": "why this clarification is needed"
+            "category": "metrics|achievements|skills|experience|education|projects",
+            "question": "specific clarification question about missing details",
+            "context": "why this clarification prevents fabrication"
         }}
     ]
 }}
 
-Be SMART, not just conservative. Focus on what actually needs clarification vs what can be safely improved.
+BE EXTREMELY CONSERVATIVE about metrics and achievements. When in doubt, ask for clarification rather than risk fabrication.
 """
 
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "system", "content": fabrication_detection_prompt}],
-                temperature=0.3,
-                max_tokens=1000
+                temperature=0.1,  # Lower temperature for more conservative detection
+                max_tokens=1200
             )
             
             content = response.choices[0].message.content
@@ -1361,6 +1701,16 @@ Be SMART, not just conservative. Focus on what actually needs clarification vs w
         """
         
         verification_issues = []
+        
+        # CRITICAL: Check for fabricated metrics and achievements across ALL sections
+        fabricated_metrics = self._detect_fabricated_metrics(original_content, suggested_content)
+        if fabricated_metrics:
+            verification_issues.append({
+                "severity": "critical",
+                "issue": "fabricated_metrics",
+                "description": f"Suggestion adds metrics/achievements not in original: {fabricated_metrics}",
+                "action": "remove_fabricated_metrics"
+            })
         
         # Skills section specific checks
         if section_type == SectionType.SKILLS:
@@ -1389,6 +1739,28 @@ Be SMART, not just conservative. Focus on what actually needs clarification vs w
                     "action": "request_user_confirmation"
                 })
         
+        # Experience section specific checks (NEW - this was missing!)
+        elif section_type == SectionType.EXPERIENCE:
+            # Check for fabricated achievements and responsibilities
+            fabricated_achievements = self._detect_fabricated_achievements(original_content, suggested_content)
+            if fabricated_achievements:
+                verification_issues.append({
+                    "severity": "critical",
+                    "issue": "fabricated_achievements",
+                    "description": f"Suggestion adds achievements not in original: {fabricated_achievements}",
+                    "action": "remove_fabricated_content"
+                })
+            
+            # Check for added responsibilities not mentioned in original
+            fabricated_responsibilities = self._detect_fabricated_responsibilities(original_content, suggested_content)
+            if fabricated_responsibilities:
+                verification_issues.append({
+                    "severity": "high",
+                    "issue": "fabricated_responsibilities",
+                    "description": f"Suggestion adds responsibilities not in original: {fabricated_responsibilities}",
+                    "action": "request_user_confirmation"
+                })
+        
         # Education section specific checks  
         elif section_type == SectionType.EDUCATION:
             # Check for fabricated projects
@@ -1410,6 +1782,18 @@ Be SMART, not just conservative. Focus on what actually needs clarification vs w
                     "action": "preserve_coursework_format"
                 })
         
+        # Projects section specific checks (NEW)
+        elif section_type == SectionType.PROJECTS:
+            # Check for fabricated project details
+            fabricated_project_details = self._detect_fabricated_project_details(original_content, suggested_content)
+            if fabricated_project_details:
+                verification_issues.append({
+                    "severity": "critical",
+                    "issue": "fabricated_project_details",
+                    "description": f"Suggestion adds project details not in original: {fabricated_project_details}",
+                    "action": "remove_fabricated_content"
+                })
+        
         # General fabrication check
         original_length = len(original_content.split())
         suggested_length = len(suggested_content.split())
@@ -1426,6 +1810,104 @@ Be SMART, not just conservative. Focus on what actually needs clarification vs w
             "issues": verification_issues,
             "recommendation": "reject" if any(issue["severity"] == "critical" for issue in verification_issues) else "review"
         }
+    
+    def _detect_fabricated_metrics(self, original_content: str, suggested_content: str) -> list:
+        """Detect fabricated metrics, percentages, and numeric achievements."""
+        import re
+        
+        # Extract metrics from both contents
+        metric_patterns = [
+            r'\d+%',  # Percentages like 50%
+            r'\d+x',  # Multipliers like 2x
+            r'\d+\s*(?:times|fold)',  # "3 times", "5-fold"
+            r'(?:increased?|improved?|reduced?|decreased?|enhanced?|optimized?)\s+(?:by\s+)?\d+',  # "increased by 50"
+            r'\d+\s*(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)',  # Time metrics
+            r'\$\d+',  # Money amounts
+            r'\d+(?:,\d{3})*\s*(?:users?|customers?|clients?|records?|entries?|items?|files?)',  # Count metrics
+        ]
+        
+        fabricated_metrics = []
+        
+        for pattern in metric_patterns:
+            original_metrics = set(re.findall(pattern, original_content, re.IGNORECASE))
+            suggested_metrics = set(re.findall(pattern, suggested_content, re.IGNORECASE))
+            
+            # Find metrics in suggestion that weren't in original
+            new_metrics = suggested_metrics - original_metrics
+            fabricated_metrics.extend(new_metrics)
+        
+        return fabricated_metrics
+    
+    def _detect_fabricated_achievements(self, original_content: str, suggested_content: str) -> list:
+        """Detect fabricated achievements and accomplishments."""
+        import re
+        
+        # Common achievement indicators that shouldn't be fabricated
+        achievement_patterns = [
+            r'(?:led|managed|directed|coordinated|spearheaded|initiated)\s+[^.]+',
+            r'(?:achieved|accomplished|delivered|completed)\s+[^.]+',
+            r'(?:resulting in|leading to|causing|enabling)\s+[^.]+',
+            r'(?:improved|enhanced|optimized|streamlined|automated)\s+[^.]+',
+            r'(?:reduced|decreased|minimized|eliminated)\s+[^.]+',
+            r'(?:increased|boosted|maximized|elevated)\s+[^.]+',
+        ]
+        
+        fabricated_achievements = []
+        
+        for pattern in achievement_patterns:
+            original_achievements = set(re.findall(pattern, original_content, re.IGNORECASE))
+            suggested_achievements = set(re.findall(pattern, suggested_content, re.IGNORECASE))
+            
+            # Find achievements in suggestion that weren't in original
+            new_achievements = suggested_achievements - original_achievements
+            # Only flag if they contain specific metrics or claims
+            for achievement in new_achievements:
+                if any(indicator in achievement.lower() for indicator in ['%', 'increase', 'decrease', 'improve', 'reduce', 'efficiency', 'performance']):
+                    fabricated_achievements.append(achievement[:100] + "..." if len(achievement) > 100 else achievement)
+        
+        return fabricated_achievements
+    
+    def _detect_fabricated_responsibilities(self, original_content: str, suggested_content: str) -> list:
+        """Detect fabricated responsibilities and duties."""
+        # Extract bullet points and major responsibilities
+        original_bullets = [line.strip() for line in original_content.split('\n') if line.strip().startswith(('•', '-', '*'))]
+        suggested_bullets = [line.strip() for line in suggested_content.split('\n') if line.strip().startswith(('•', '-', '*'))]
+        
+        # Find responsibilities that are completely new
+        fabricated_responsibilities = []
+        for suggested_bullet in suggested_bullets:
+            # Check if this responsibility has any similarity to original content
+            if not any(self._calculate_bullet_similarity(suggested_bullet, original_bullet) > 0.6 
+                      for original_bullet in original_bullets):
+                # This might be a completely fabricated responsibility
+                fabricated_responsibilities.append(suggested_bullet[:100] + "..." if len(suggested_bullet) > 100 else suggested_bullet)
+        
+        return fabricated_responsibilities[:3]  # Limit to prevent overwhelming output
+    
+    def _detect_fabricated_project_details(self, original_content: str, suggested_content: str) -> list:
+        """Detect fabricated project details and technologies."""
+        original_technologies = set(self._extract_skills_from_text(original_content))
+        suggested_technologies = set(self._extract_skills_from_text(suggested_content))
+        
+        # Find technologies in projects that weren't mentioned in original
+        fabricated_techs = suggested_technologies - original_technologies
+        
+        return list(fabricated_techs)[:5]  # Limit output
+    
+    def _calculate_bullet_similarity(self, bullet1: str, bullet2: str) -> float:
+        """Calculate similarity between two bullet points."""
+        words1 = set(bullet1.lower().split())
+        words2 = set(bullet2.lower().split())
+        
+        if not words1 and not words2:
+            return 1.0
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1 & words2
+        union = words1 | words2
+        
+        return len(intersection) / len(union) if union else 0.0
     
     def _extract_skills_from_text(self, text: str) -> list:
         """Extract individual skills/technologies from text."""
@@ -1834,17 +2316,278 @@ Return ONLY a valid JSON object with these exact keys:
         }
     
     async def provide_clarification(self, session_id: str, section_type: str, user_response: str) -> Dict[str, Any]:
-        """Handle user clarification."""
+        """
+        Handle user clarification and re-analyze specific section.
+        Now works with the improved flow that processes all sections.
+        """
         if session_id not in self.sessions:
             return {"success": False, "error": "Session not found"}
         
+        session = self.sessions[session_id]
+        
+        # Check if this section has a pending clarification
+        pending_clarifications = session.get("pending_clarifications", {})
+        if section_type not in pending_clarifications:
+            return {"success": False, "error": f"No pending clarification for section {section_type}"}
+        
+        logger.info(f"Processing clarification for {section_type} in session {session_id[:8]}")
+        logger.info(f"User provided: {user_response[:100]}...")
+        
+        try:
+            # Get the original content and job analysis
+            parsed_sections = session["sections"]
+            job_analysis = session["job_analysis"]
+            pending_clarification = pending_clarifications[section_type]
+            original_content = pending_clarification["original_content"]
+            
+            # Create enhanced content by incorporating user clarification
+            enhanced_content = f"""
+{original_content}
+
+ADDITIONAL CONTEXT PROVIDED BY USER:
+{user_response}
+"""
+            
+            # Re-run analysis with user's additional context
+            section_type_enum = next(
+                (st for st in SectionType if st.value == section_type), 
+                SectionType.EXPERIENCE  # fallback
+            )
+            
+            # Run analysis again with enhanced context
+            logger.info(f"Re-analyzing {section_type} with user clarification")
+            analysis = await self._iterative_section_improvement_with_clarification(
+                enhanced_content,
+                original_content,  # Keep original separate
+                section_type_enum,
+                job_analysis,
+                parsed_sections,
+                user_response
+            )
+            
+            # Store the updated analysis
+            session["section_analyses"][section_type] = analysis
+            
+            # Remove this clarification from pending list
+            del pending_clarifications[section_type]
+            session["pending_clarifications"] = pending_clarifications
+            
+            # Update session state - only mark as no clarification if no more pending
+            session["needs_clarification"] = len(pending_clarifications) > 0
+            
+                        # Log successful clarification
+            monitor.log_agent_action("clarification_processed", {
+                "session_id": session_id,
+                "section_type": section_type,
+                "user_response_length": len(user_response),
+                "final_score": analysis.final_score,
+                "remaining_clarifications": len(pending_clarifications)
+            })
+            
+            return {
+                "success": True,
+                "analysis": {
+                    "section_type": analysis.section_type.value,
+                    "original_content": analysis.original_content,
+                    "improved_content": analysis.best_content,
+                    "score": analysis.final_score,
+                    "feedback": analysis.improvement_journey,
+                    "iteration_count": len(analysis.iterations),
+                    "needs_clarification": False,
+                    "clarification_request": None
+                },
+                "session_updated": True,
+                "remaining_clarifications": list(pending_clarifications.keys()),
+                "needs_more_clarification": len(pending_clarifications) > 0,
+                "clarifications_completed": len(pending_clarifications) == 0
+            }
+        
+        except Exception as e:
+            logger.error(f"Error processing clarification for {section_type}: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Failed to process clarification: {str(e)}"
+            }
+    
+    async def _iterative_section_improvement_with_clarification(
+        self,
+        enhanced_content: str,
+        original_content: str,
+        section_type: SectionType,
+        job_analysis: JobAnalysis,
+        all_sections: Dict[str, Dict[str, Any]],
+        user_clarification: str
+    ) -> SectionAnalysis:
+        """
+        Enhanced section improvement that incorporates user clarification.
+        This bypasses fabrication detection since user provided the details.
+        """
+        logger.info(f"Re-analyzing {section_type.value} with user clarification")
+        
+        iterations = []
+        current_content = original_content  # Start with original for comparison
+        best_content = original_content
+        best_score = 0
+        
+        # Initialize monitoring for this clarified section
+        monitor.log_agent_action("clarified_section_analysis_started", {
+            "section_type": section_type.value,
+            "original_length": len(original_content),
+            "clarification_length": len(user_clarification),
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # ITERATION LOOP: Improve with user's additional context
+        for iteration in range(self.max_iterations):
+            perspective = self.perspective_rotation[iteration % len(self.perspective_rotation)]
+            
+            try:
+                # Generate improvement using both original content and user clarification
+                improved_content = await self._generate_content_with_clarification(
+                    original_content, 
+                    user_clarification,
+                    section_type, 
+                    job_analysis, 
+                    perspective, 
+                    iteration + 1
+                )
+                
+                # Score the improved content
+                primary_score = await self._score_content_quality(
+                    content=improved_content,
+                    section_type=section_type,
+                    job_analysis=job_analysis
+                )
+                
+                # Get detailed evaluation
+                evaluation = await self._self_evaluate_content(
+                    improved_content, section_type, job_analysis, perspective
+                )
+                
+                # Create iteration result
+                iteration_result = IterationResult(
+                    version=iteration + 1,
+                    content=improved_content,
+                    perspective=perspective,
+                    quality_score=primary_score,
+                    strengths=evaluation["strengths"],
+                    weaknesses=evaluation["weaknesses"],
+                    improvement_notes=evaluation["improvement_notes"],
+                    timestamp=datetime.now()
+                )
+                
+                iterations.append(iteration_result)
+                
+                # Track best version
+                if primary_score > best_score:
+                    best_content = improved_content
+                    best_score = primary_score
+                    logger.info(f"New best version! Score: {best_score}")
+                
+                # Check if we've reached excellence
+                if primary_score >= self.quality_threshold:
+                    logger.info(f"Excellence achieved with clarification! Score: {primary_score}")
+                    break
+                
+                # Small delay to avoid rate limiting
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.error(f"Analysis error with clarification: {str(e)}")
+                break
+        
+        # Generate improvement journey narrative
+        improvement_journey = f"Enhanced with user clarification: {user_clarification[:100]}..." if user_clarification else "Analysis completed with clarification."
+        
+        if iterations:
+            best_iteration = max(iterations, key=lambda x: x.quality_score)
+            improvement_journey = f"Applied user clarification and achieved {len(iterations)} iterations. {best_iteration.improvement_notes}"
+        
+        return SectionAnalysis(
+            section_type=section_type,
+            original_content=original_content,
+            best_content=best_content,
+            iterations=iterations,
+            final_score=best_score,
+            improvement_journey=improvement_journey,
+            needs_clarification=False,  # Clarification has been provided
+            clarification_request=None
+        )
+    
+    async def _continue_analysis_after_clarification(
+        self,
+        session_id: str,
+        parsed_sections: Dict[str, Dict[str, Any]],
+        job_analysis: JobAnalysis
+    ) -> Dict[str, Any]:
+        """
+        Continue processing remaining sections after clarification is provided.
+        """
+        session = self.sessions[session_id]
+        current_index = session.get("current_section_index", 0)
+        remaining_sections = []
+        
+        # Continue from where we left off
+        for i, section_type in enumerate(self.analysis_order[current_index + 1:], current_index + 1):
+            section_key = section_type.value
+            session["current_section_index"] = i
+            
+            if section_key in parsed_sections and parsed_sections[section_key]["content"].strip():
+                logger.info(f"Continuing with {section_key} section")
+                
+                try:
+                    analysis = await self._iterative_section_improvement(
+                        parsed_sections[section_key]["content"],
+                        section_type,
+                        job_analysis,
+                        parsed_sections
+                    )
+                    
+                    # Check if this section also needs clarification
+                    if analysis.needs_clarification and analysis.clarification_request:
+                        logger.warning(f"Another clarification needed: {section_key}")
+                        
+                        # Update session for next clarification
+                        session["needs_clarification"] = True
+                        session["pending_clarification"] = {
+                            "section_type": section_key,
+                            "question": analysis.clarification_request.question,
+                            "context": analysis.clarification_request.context,
+                            "reason": analysis.clarification_request.reason,
+                            "original_content": analysis.clarification_request.original_content
+                        }
+                        
+                        return {
+                            "remaining_sections": remaining_sections,
+                            "needs_clarification": True,
+                            "pending_clarification": session["pending_clarification"]
+                        }
+                    
+                    # No clarification needed, save and continue
+                    session["section_analyses"][section_key] = analysis
+                    remaining_sections.append({
+                        "section_type": section_key,
+                        "status": "completed",
+                        "score": analysis.final_score
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error continuing analysis for {section_key}: {str(e)}")
+                    remaining_sections.append({
+                        "section_type": section_key,
+                        "status": "error",
+                        "error": str(e)
+                    })
+        
+        # All remaining sections completed
         return {
-            "success": True,
-            "analysis": self.sessions[session_id]["section_analyses"].get(section_type, {})
+            "remaining_sections": remaining_sections,
+            "needs_clarification": False,
+            "pending_clarification": None
         }
     
     async def accept_section_changes(self, session_id: str, section_type: str, accepted: bool) -> Dict[str, Any]:
-        """Accept or reject section changes."""
+        """Accept or reject section changes and continue analysis if needed."""
         if session_id not in self.sessions:
             return {"success": False, "error": "Session not found"}
         
@@ -1853,50 +2596,304 @@ Return ONLY a valid JSON object with these exact keys:
         session["accepted_changes"][section_type] = accepted
         logger.info(f"Section {section_type} changes {'accepted' if accepted else 'rejected'} in session {session_id}")
         
+        # Check if this section exists in section_analyses (new system)
+        section_analyses = session.get("section_analyses", {})
+        if section_type in section_analyses:
+            analysis = section_analyses[section_type]
+            
+            # If section needs clarification and user accepted, clear the clarification flag
+            if analysis.needs_clarification and accepted:
+                logger.info(f"User accepted safe changes for {section_type}, clearing clarification requirement")
+                # Update the analysis to remove clarification requirement
+                analysis.needs_clarification = False
+                analysis.clarification_request = None
+                
+                # Remove from any pending clarifications collections
+                pending_clarifications = session.get("pending_clarifications", {})
+                if section_type in pending_clarifications:
+                    del pending_clarifications[section_type]
+                    session["pending_clarifications"] = pending_clarifications
+                
+                # Update session state
+                session["section_analyses"][section_type] = analysis
+        
         return {
             "success": True,
-            "message": f"Changes {'accepted' if accepted else 'rejected'} for {section_type}"
+                    "message": f"Safe changes accepted for {section_type}",
+                    "analysis_continued": False,  # No need to continue, just mark as accepted
+                    "clarification_cleared": True
+                }
+        
+        # LEGACY: Handle old pending_clarification system
+        pending_clarification = session.get("pending_clarification")
+        if pending_clarification and pending_clarification["section_type"] == section_type:
+            logger.info(f"Continuing analysis after accepting {section_type} changes (legacy system)")
+            
+            # Clear the pending clarification since user accepted the safe improvements
+            session["needs_clarification"] = False
+            session["pending_clarification"] = None
+            
+            try:
+                # Continue processing remaining sections
+                parsed_sections = session["sections"]
+                job_analysis = session["job_analysis"]
+                
+                remaining_sections_result = await self._continue_analysis_after_clarification(
+                    session_id, parsed_sections, job_analysis
+                )
+                
+                return {
+                    "success": True,
+                    "message": f"Changes {'accepted' if accepted else 'rejected'} for {section_type}",
+                    "analysis_continued": True,
+                    "remaining_sections": remaining_sections_result["remaining_sections"],
+                    "needs_more_clarification": remaining_sections_result["needs_clarification"],
+                    "pending_clarification": remaining_sections_result.get("pending_clarification")
+                }
+                
+            except Exception as e:
+                logger.error(f"Error continuing analysis after accepting {section_type}: {str(e)}")
+                return {
+                    "success": True,
+                    "message": f"Changes {'accepted' if accepted else 'rejected'} for {section_type}",
+                    "analysis_continued": False,
+                    "error": f"Failed to continue analysis: {str(e)}"
+                }
+        
+        return {
+            "success": True,
+            "message": f"Changes {'accepted' if accepted else 'rejected'} for {section_type}",
+            "analysis_continued": False
         }
     
     async def generate_final_resume(self, session_id: str) -> Dict[str, Any]:
         """Generate final resume based on user's accepted/rejected changes."""
         if session_id not in self.sessions:
+            logger.error(f"Session {session_id} not found in sessions: {list(self.sessions.keys())}")
             return {"success": False, "error": "Session not found"}
         
         session = self.sessions[session_id]
         sections = []
         accepted_changes = session.get("accepted_changes", {})
+        section_analyses = session.get("section_analyses", {})
         
-        logger.info(f"Generating final resume for session {session_id}")
+        logger.info(f"=== GENERATING FINAL RESUME FOR SESSION {session_id} ===")
+        logger.info(f"Session keys: {list(session.keys())}")
         logger.info(f"Accepted changes: {accepted_changes}")
+        logger.info(f"Available section analyses: {list(section_analyses.keys())}")
         
-        for section_type, analysis in session.get("section_analyses", {}).items():
+        # ENHANCED DEBUG: Also check parsed sections to see what was originally found
+        parsed_sections = session.get("sections", {})
+        logger.info(f"Originally parsed sections: {list(parsed_sections.keys())}")
+        
+        # ENHANCED DEBUG: Check for any missing sections
+        analysis_order = [st.value for st in self.analysis_order]
+        # missing_sections = [section for section in analysis_order if section in parsed_sections but section not in section_analyses]
+        # if missing_sections:
+        # logger.warning(f"❌ MISSING SECTIONS in section_analyses: {missing_sections}")
+        # else:
+        # logger.info(f"✅ All expected sections found in section_analyses")
+        
+        for section_type, analysis in section_analyses.items():
+            logger.info(f"\n--- Processing section: {section_type} ---")
+            logger.info(f"Analysis type: {type(analysis)}")
+            logger.info(f"Has best_content: {hasattr(analysis, 'best_content')}")
+            logger.info(f"Has original_content: {hasattr(analysis, 'original_content')}")
+            
+            if hasattr(analysis, 'best_content'):
+                best_content_length = len(analysis.best_content) if analysis.best_content else 0
+                original_content_length = len(analysis.original_content) if analysis.original_content else 0
+                logger.info(f"Best content length: {best_content_length}")
+                logger.info(f"Original content length: {original_content_length}")
+                
+                if analysis.best_content:
+                    logger.info(f"Best content preview: {analysis.best_content[:100]}...")
+                if analysis.original_content:
+                    logger.info(f"Original content preview: {analysis.original_content[:100]}...")
+            
             # Determine which content to use based on user decision
             if section_type in accepted_changes:
                 if accepted_changes[section_type]:
-                    # User accepted changes - use improved content
-                    content = analysis.best_content or analysis.original_content
-                    logger.info(f"Using improved content for {section_type}")
+                    # User accepted changes - use improved content if available, fallback to original
+                    if analysis.best_content and analysis.best_content.strip():
+                        content = analysis.best_content
+                        logger.info(f"✅ ACCEPTED: Using improved content for {section_type} (length: {len(content)})")
+                    else:
+                        content = analysis.original_content
+                        logger.info(f"✅ ACCEPTED: No improved content available, using original for {section_type} (length: {len(content) if content else 0})")
                 else:
                     # User rejected changes - use original content
                     content = analysis.original_content
-                    logger.info(f"Using original content for {section_type} (rejected)")
+                    logger.info(f"❌ REJECTED: Using original content for {section_type} (length: {len(content) if content else 0})")
             else:
-                # No decision made - default to original content
-                content = analysis.original_content
-                logger.info(f"Using original content for {section_type} (no decision)")
+                # No decision made - default to improved content if available (safe improvements), otherwise original
+                if analysis.best_content and analysis.best_content.strip() and not analysis.needs_clarification:
+                    content = analysis.best_content
+                    logger.info(f"⚪ NO DECISION: Using safe improved content for {section_type} (length: {len(content)})")
+                else:
+                    content = analysis.original_content
+                    logger.info(f"⚪ NO DECISION: Using original content for {section_type} (length: {len(content) if content else 0})")
+            
+            if not content:
+                logger.warning(f"⚠️ WARNING: No content found for {section_type}, skipping section")
+                continue
             
             # Format section with proper header
             section_title = section_type.upper().replace('_', ' ')
-            sections.append(f"=== {section_title} ===\n{content}")
+            formatted_section = f"=== {section_title} ===\n{content}"
+            sections.append(formatted_section)
+            logger.info(f"✅ Added section {section_type} (formatted length: {len(formatted_section)})")
         
         final_resume = "\n\n".join(sections)
         
-        logger.info(f"Generated final resume with {len(sections)} sections")
+        logger.info(f"=== FINAL RESUME GENERATION COMPLETE ===")
+        logger.info(f"Total sections included: {len(sections)}")
+        logger.info(f"Final resume length: {len(final_resume)}")
+        logger.info(f"Final resume preview: {final_resume[:200]}...")
         
         return {
             "success": True,
             "final_resume": final_resume,
-            "sections": list(session.get("section_analyses", {}).keys()),
+            "sections": list(section_analyses.keys()),
             "session_id": session_id
         } 
+
+    async def _generate_content_with_clarification(
+        self,
+        original_content: str,
+        user_clarification: str,
+        section_type: SectionType,
+        job_analysis: JobAnalysis,
+        perspective: AnalysisPerspective,
+        iteration: int
+    ) -> str:
+        """
+        Generate improved content incorporating user's clarification.
+        This bypasses fabrication detection since user provided the details.
+        """
+        
+        # Get section-specific formatting rules
+        formatting_prompt = self.section_prompts.get(section_type, self.base_formatting_rules)
+        
+        system_prompt = f"""
+ENHANCED CONTENT GENERATION WITH USER CLARIFICATION
+
+You are enhancing resume content with additional context provided by the user.
+Since the user provided clarification, you can now safely incorporate details that match job requirements.
+
+ORIGINAL CONTENT:
+{original_content}
+
+USER'S ADDITIONAL CLARIFICATION:
+{user_clarification}
+
+JOB REQUIREMENTS ANALYSIS:
+{job_analysis.requirements[:3]}
+
+PERSPECTIVE: {perspective.value}
+ITERATION: {iteration}
+
+ENHANCED IMPROVEMENT RULES (with user clarification):
+1. INCORPORATE USER DETAILS - Use the clarification to add specific, accurate information
+2. MAINTAIN AUTHENTICITY - Only use details the user explicitly provided
+3. PROFESSIONAL ENHANCEMENT - Improve presentation while staying truthful
+4. KEYWORD INTEGRATION - Naturally incorporate relevant job keywords where appropriate
+5. QUANTIFICATION ALLOWED - If user provided metrics/numbers, use them appropriately
+6. SKILLS ENHANCEMENT - Add skills/technologies user mentioned in clarification
+7. ACHIEVEMENT HIGHLIGHTING - Emphasize accomplishments user clarified
+
+{formatting_prompt}
+
+CLARIFICATION-ENHANCED APPROACH:
+- Merge original content with user's additional details
+- Create a cohesive, enhanced narrative
+- Maintain professional tone and formatting
+- Ensure all additions are based on user input
+- Prioritize impact and relevance to target role
+
+OUTPUT: Return ONLY the enhanced {section_type.value} content. No explanations.
+"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Please enhance the {section_type.value} section using the user's clarification to create accurate, impactful content that aligns with the job requirements."}
+        ]
+
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.3,  # Lower temperature for more consistent output
+                max_tokens=1000
+            )
+            
+            improved_content = response.choices[0].message.content.strip()
+            
+            # Log successful enhancement with clarification
+            logger.info(f"Enhanced {section_type.value} with user clarification: {len(improved_content)} chars")
+            
+            return improved_content
+            
+        except Exception as e:
+            logger.error(f"Error generating content with clarification: {str(e)}")
+            # Fallback: return original content with user details appended
+            return f"{original_content}\n\nAdditional Details: {user_clarification}"
+
+    async def analyze_section(self, session_id: str, section_type: str) -> Dict[str, Any]:
+        """
+        Analyze a specific section - used by the API endpoint.
+        This method handles both new analysis and returning existing results.
+        """
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        session = self.sessions[session_id]
+        
+        # Check if this section already has analysis results
+        if section_type in session.get("section_analyses", {}):
+            analysis = session["section_analyses"][section_type]
+            return {
+                "success": True,
+                "analysis": {
+                    "section_type": analysis.section_type.value,
+                    "original_content": analysis.original_content,
+                    "improved_content": analysis.best_content,
+                    "score": analysis.final_score,
+                    "feedback": analysis.improvement_journey,
+                    "iteration_count": len(analysis.iterations),
+                    "needs_clarification": analysis.needs_clarification,
+                    "clarification_request": {
+                        "question": analysis.clarification_request.question,
+                        "context": analysis.clarification_request.context,
+                        "reason": analysis.clarification_request.reason
+                    } if analysis.clarification_request else None
+                }
+            }
+        
+        # Check if there's a pending clarification for this section
+        pending_clarification = session.get("pending_clarification")
+        if pending_clarification and pending_clarification["section_type"] == section_type:
+            return {
+                "success": True,
+                "analysis": {
+                    "section_type": section_type,
+                    "original_content": pending_clarification["original_content"],
+                    "improved_content": None,
+                    "score": 0,
+                    "feedback": "Waiting for user clarification",
+                    "iteration_count": 0,
+                    "needs_clarification": True,
+                    "clarification_request": {
+                        "question": pending_clarification["question"],
+                        "context": pending_clarification["context"],
+                        "reason": pending_clarification["reason"]
+                    }
+                }
+            }
+        
+        # Section not yet analyzed - this shouldn't happen in the human-in-the-loop flow
+        # since start_analysis processes sections sequentially
+        return {
+            "success": False, 
+            "error": f"Section {section_type} not yet reached in analysis pipeline"
+        }

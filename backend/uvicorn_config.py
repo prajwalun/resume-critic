@@ -26,7 +26,7 @@ class CleanFilter(logging.Filter):
             return False
         if "Uvicorn running on" in record.getMessage():
             # Clean up the startup message
-            record.msg = "🚀 ResumeWise API running on %s"
+            record.msg = "ResumeWise API running on %s"
         return True
 
 # Apply clean filter

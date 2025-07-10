@@ -5,7 +5,7 @@ python-multipart==0.0.9
 python-dotenv==1.0.1
 
 # Judgment framework and compatible dependencies
-judgeval>=0.1.0
+judgeval>=0.0.50
 openai>=1.90.0
 httpx>=0.28.0
 
@@ -13,3 +13,10 @@ httpx>=0.28.0
 langchain-core>=0.2.0
 langchain-openai>=0.1.25
 langsmith>=0.1.100
+
+# Testing dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.0.0
+pytest-mock>=3.12.0
+coverage>=7.4.0
