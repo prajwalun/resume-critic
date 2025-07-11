@@ -3,16 +3,8 @@ uvicorn==0.27.1
 pdfplumber==0.10.3
 python-multipart==0.0.9
 python-dotenv==1.0.1
-
-# Judgment framework and compatible dependencies
-judgeval>=0.0.50
 openai>=1.90.0
-httpx>=0.28.0
-
-# Compatible LangChain versions
-langchain-core>=0.2.0
-langchain-openai>=0.1.25
-langsmith>=0.1.100
+judgeval>=0.0.50
 
 # Testing dependencies
 pytest>=8.0.0

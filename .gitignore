@@ -189,4 +189,23 @@ celerybeat.pid
 # mypy
 .mypy_cache/
 .dmypy.json
-dmypy.json 
+dmypy.json
+
+# Judgment SDK specific
+.judgment/
+judgment_cache/
+
+# Environment files
+.env.example
+.env.production
+.env.staging
+
+# IDE specific
+*.sublime-project
+*.sublime-workspace
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/ 

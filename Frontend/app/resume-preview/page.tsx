@@ -497,7 +497,7 @@ export default function ResumePreview() {
         }
         
         setSessionId(retrievedSessionId)
-        console.log("Loading final resume for session:", retrievedSessionId)
+    
         
         // Call backend to generate the final resume
         const finalResumeText = await generateFinalResume(retrievedSessionId)
@@ -507,12 +507,12 @@ export default function ResumePreview() {
           return
         }
         
-        console.log("Final resume received:", finalResumeText.substring(0, 200) + "...")
+
         
         // Parse the formatted resume into sections
         const sections = parseFinalResume(finalResumeText)
         
-        console.log("Parsed sections:", sections.map(s => ({ title: s.title, contentLength: s.content.length })))
+
         
         setFinalResume(finalResumeText)
         setParsedSections(sections)

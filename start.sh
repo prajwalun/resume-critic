@@ -102,7 +102,7 @@ JUDGMENT_EVALUATIONS=true
 EOF
     echo "Please edit backend/.env with your API keys before running the server"
     echo "   - Get OpenAI API key from: https://platform.openai.com/api-keys"
-    echo "   - Get Judgment API key from: https://platform.judgmentlabs.ai"
+    echo "   - Get Judgment API key from: https://judgmentlabs.ai"
 fi
 
 # Start backend in background
@@ -164,10 +164,10 @@ echo ""
 echo "Frontend Application: http://localhost:3000"
 echo "Backend API: http://localhost:8000"
 echo "API Documentation: http://localhost:8000/docs"
-echo "Judgment Dashboard: https://platform.judgmentlabs.ai"
+echo "Judgment Dashboard: https://judgmentlabs.ai"
 echo ""
-echo "Monitor your agent traces at: https://platform.judgmentlabs.ai/traces"
-echo "View evaluations at: https://platform.judgmentlabs.ai/evaluations"
+echo "Monitor your agent traces at: https://judgmentlabs.ai/traces"
+echo "View evaluations at: https://judgmentlabs.ai/evaluations"
 echo ""
 echo "Features Active:"
 echo "   - Fast primary scoring for real-time decisions"

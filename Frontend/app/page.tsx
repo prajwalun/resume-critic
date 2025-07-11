@@ -180,28 +180,9 @@ export default function ResumeWise() {
     }
   }
 
-  // DEBUG: Monitor analysisSession state changes
+    // Monitor analysisSession state changes
   useEffect(() => {
-    if (analysisSession) {
-      console.log("Analysis session state updated:")
-      console.log("Session ID:", analysisSession.sessionId)
-      console.log("Sections keys:", Object.keys(analysisSession.sections))
-      console.log("Analysis order:", analysisSession.analysisOrder)
-      console.log("Section analyses keys:", Object.keys(analysisSession.sectionAnalyses))
-      
-      // Log each section in detail
-      Object.entries(analysisSession.sections).forEach(([sectionType, sectionData]) => {
-        console.log(`Session Section ${sectionType}:`)
-        console.log(`  - Type: ${typeof sectionData}`)
-        console.log(`  - Keys: ${Object.keys(sectionData)}`)
-        console.log(`  - Content length: ${sectionData.content?.length || 0}`)
-        if (sectionData.content) {
-          console.log(`  - Content preview: "${sectionData.content.substring(0, 100)}..."`)
-        }
-      })
-    } else {
-      console.log("ERROR: analysisSession is null/undefined")
-    }
+    // Session state monitoring logic can be added here if needed
   }, [analysisSession])
 
   // Handlers
@@ -215,54 +196,9 @@ export default function ResumeWise() {
     setError(null)
 
     try {
-      console.log("Starting analysis with file:", resumeFile.name)
       const response = await resumeWiseAPI.startAnalysis(resumeFile, jobDescription)
       
-      // COMPREHENSIVE DEBUG: Full response analysis
-      console.log("=== COMPREHENSIVE DEBUG: API Response ===")
-      console.log("Raw response:", response)
-      console.log("Response type:", typeof response)
-      console.log("Response keys:", Object.keys(response))
-      console.log("Success:", response.success)
-      console.log("Session ID:", response.session_id)
-      console.log("Sections type:", typeof response.sections)
-      console.log("Sections keys:", response.sections ? Object.keys(response.sections) : "NO SECTIONS")
       
-      // Check each section in detail
-      if (response.sections) {
-        console.log("SECTION-BY-SECTION ANALYSIS:")
-        Object.entries(response.sections).forEach(([sectionType, sectionData]) => {
-          console.log(`\nSection: ${sectionType}`)
-          console.log(`  - Type: ${typeof sectionData}`)
-          console.log(`  - Keys: ${Object.keys(sectionData as any)}`)
-          console.log(`  - Has content field: ${'content' in (sectionData as any)}`)
-          console.log(`  - Content type: ${typeof (sectionData as any).content}`)
-          console.log(`  - Content length: ${(sectionData as any).content?.length || 0}`)
-          if ((sectionData as any).content) {
-            console.log(`  - Content preview: "${(sectionData as any).content.substring(0, 150)}..."`)
-        } else {
-            console.log(`  - ERROR: NO CONTENT FOUND`)
-          }
-        })
-      } else {
-        console.log("ERROR: NO SECTIONS OBJECT IN RESPONSE")
-      }
-      
-      // Check section analyses
-      console.log("\nSECTION ANALYSES:")
-      console.log("Section analyses type:", typeof response.section_analyses)
-      console.log("Section analyses keys:", response.section_analyses ? Object.keys(response.section_analyses) : "NO ANALYSES")
-      
-      if (response.section_analyses) {
-        Object.entries(response.section_analyses).forEach(([sectionType, analysis]) => {
-          console.log(`\nAnalysis: ${sectionType}`)
-          console.log(`  - Type: ${typeof analysis}`)
-          console.log(`  - Keys: ${Object.keys(analysis as any)}`)
-          console.log(`  - Original content length: ${(analysis as any).original_content?.length || 0}`)
-          console.log(`  - Has improved content: ${!!(analysis as any).improved_content}`)
-          console.log(`  - Score: ${(analysis as any).score}`)
-        })
-      }
       
       if (response.success && response.session_id) {
         // Set up the complete analysis session with ALL results
@@ -284,18 +220,7 @@ export default function ResumeWise() {
           acceptedChanges: {}
         }
         
-        console.log("STORING SESSION DATA:")
-        console.log("Session object:", newSession)
-        console.log("Session sections keys:", Object.keys(newSession.sections))
-        console.log("Session analyses keys:", Object.keys(newSession.sectionAnalyses))
-        
         setAnalysisSession(newSession)
-        
-        // Verify the state was set correctly
-        setTimeout(() => {
-          console.log("VERIFICATION: Checking stored state after 100ms")
-          // This will be logged after state update
-        }, 100)
         
       } else {
         setError(response.error || "Failed to start analysis")
@@ -370,7 +295,6 @@ export default function ResumeWise() {
     if (!analysisSession) return
 
     try {
-      console.log(`${accepted ? 'Accepting' : 'Rejecting'} changes for ${sectionType}...`)
       
       // Store previous state for undo
       const previousState = analysisSession.acceptedChanges[sectionType] ?? null
@@ -417,15 +341,12 @@ export default function ResumeWise() {
           })
         }
         
-        console.log(`✅ Changes ${accepted ? 'accepted' : 'rejected'} for ${sectionType}`)
         setError(null)
         
       } else {
-        console.error(`❌ Failed to ${accepted ? 'accept' : 'reject'} changes for ${sectionType}:`, response.error)
         setError(response.error || `Failed to ${accepted ? 'accept' : 'reject'} changes`)
       }
     } catch (error) {
-      console.error(`Error ${accepted ? 'accepting' : 'rejecting'} changes:`, error)
       setError(`An error occurred while ${accepted ? 'accepting' : 'rejecting'} changes`)
     }
   }
@@ -434,12 +355,8 @@ export default function ResumeWise() {
     if (!analysisSession) return
 
     try {
-      console.log(`Accepting safe changes for ${sectionType}...`)
-      
       // Call backend to accept only safe changes (without providing clarification)
       const response = await resumeWiseAPI.acceptChanges(analysisSession.sessionId, sectionType, true)
-      
-      console.log(`Backend response for ${sectionType}:`, response)
       
       if (response.success) {
         // Update local state to mark as accepted and clear clarification
@@ -474,17 +391,13 @@ export default function ResumeWise() {
           return updated
         })
         
-        console.log(`✅ Safe changes accepted for ${sectionType}`)
-        
         // Show success message briefly
         setError(null)
         
       } else {
-        console.error(`❌ Failed to accept safe changes for ${sectionType}:`, response.error)
         setError(response.error || "Failed to accept safe changes")
       }
     } catch (error) {
-      console.error("Error accepting safe changes:", error)
       setError("An error occurred while accepting safe changes")
     }
   }
@@ -910,10 +823,7 @@ export default function ResumeWise() {
               const hasUndoHistory = undoHistory[sectionType] !== undefined
               const SectionIcon = SECTION_ICONS[sectionType] || FileText
               
-              // Debug logging for acceptance status
-              if (isAccepted) {
-                console.log(`DEBUG: Section ${sectionType} showing as accepted. acceptedChanges value:`, analysisSession.acceptedChanges[sectionType])
-              }
+
               
               const displayScore = analysis ? Math.round(analysis.score / 20) : 0
               

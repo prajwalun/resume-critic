@@ -1,8 +1,7 @@
 # ResumeWise - AI-Powered Agentic Resume Analyzer
 
-> **Intelligent resume analysis with dual-system architecture: fast decision-making powered by comprehensive observability**
+> **Intelligent resume analysis with iterative improvement and anti-fabrication protection**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109.2-009688.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15.2.4-black.svg)](https://nextjs.org/)
@@ -10,40 +9,36 @@
 
 ## What is ResumeWise?
 
-ResumeWise is an **agentic AI system** that analyzes and improves resumes through iterative refinement with built-in **anti-fabrication protection**. Unlike simple AI tools, ResumeWise operates as an autonomous agent that:
+ResumeWise is an **agentic AI system** that analyzes and improves resumes through iterative refinement with built-in **anti-fabrication protection**. The system operates as an autonomous agent that:
 
-- **Thinks iteratively** through multiple improvement cycles (up to 5 iterations per section)
-- **Self-evaluates** each iteration for quality using dual-system architecture
-- **Makes intelligent decisions** about when to accept, retry, or request clarification
-- **Prevents fabrication** through rigorous content verification
-- **Learns patterns** from verification failures
-- **Maintains transparency** through comprehensive observability via Judgment SDK
+- **Iterates intelligently** through multiple improvement cycles (up to 5 iterations per section)
+- **Self-evaluates** each iteration using a dual-system architecture
+- **Makes decisions** about when to accept, retry, or request human clarification
+- **Prevents fabrication** through rigorous content verification before any improvements
+- **Maintains transparency** through comprehensive observability via Judgment SDK integration
 
 ### Key Features
-- **Agentic Architecture**: Autonomous decision-making with human-in-the-loop clarification
-- **Anti-Fabrication Protection**: Prevents addition of false achievements or experiences  
-- **Dual-System Evaluation**: Fast primary scoring + comprehensive quality analysis
-- **Multi-Perspective Analysis**: 6 different analytical viewpoints per section
-- **Real-time Monitoring**: Complete observability via Judgment Labs integration
-- **Human-in-the-Loop**: Interactive clarification when fabrication risks detected
+- **Agentic Architecture**: Autonomous decision-making with human-in-the-loop workflow
+- **Anti-Fabrication Protection**: Prevents addition of false achievements, skills, or experiences
+- **Dual-System Evaluation**: Fast primary scoring for agent decisions + comprehensive quality analysis
+- **Multi-Perspective Analysis**: Different analytical viewpoints for each section
+- **Observability**: Complete tracing and monitoring via Judgment Labs SDK
+- **Human-in-the-Loop**: Interactive clarification when fabrication risks are detected
 
-## Dual-System Architecture
+## System Architecture
 
-ResumeWise implements a sophisticated **dual-system approach** that combines speed with deep insights:
+ResumeWise implements a **dual-system approach** combining fast decision-making with comprehensive analysis:
 
 ### Primary Scoring System
 - **Purpose**: Real-time agent decision making
-- **Speed**: < 1 second per decision
 - **Model**: GPT-4o-mini for efficiency
 - **Function**: Drives accept/retry/clarify logic
-- **Scoring**: Simple 1-100 scale for immediate action
+- **Threshold**: Targets quality score of 90+ for acceptance
 
 ### Judgment Framework Integration
 - **Purpose**: Comprehensive quality analysis and monitoring
-- **Speed**: 2-5 seconds (runs in parallel)
-- **Model**: GPT-4o for detailed evaluation
-- **Function**: Deep quality insights and pattern detection
-- **Metrics**: Multi-dimensional assessment across 6 core areas
+- **Function**: Deep quality insights, tracing, and pattern detection
+- **Fallback**: System continues functioning when Judgment SDK is unavailable
 
 ```mermaid
 graph TD
@@ -55,19 +50,16 @@ graph TD
     E -->|Safe| F[Primary Scoring]
     E -->|Risky| G[Request Clarification]
     
-    F --> H{Score ≥ 80?}
+    F --> H{Quality Score ≥ 90?}
     H -->|Yes| I[Accept & Continue]
-    H -->|No| J{Score ≥ 60?}
-    J -->|Yes| K[Retry Iteration]
-    J -->|No| G
+    H -->|No| J[Retry Iteration]
     
     D --> L[Judgment Evaluation]
     L --> M[Quality Metrics]
-    L --> N[Pattern Detection]
-    L --> O[Performance Monitoring]
+    L --> N[Tracing & Monitoring]
     
     I --> P[Final Resume Generation]
-    G --> Q[User Input] 
+    G --> Q[User Clarification] 
     Q --> D
     
     style E fill:#FFB6C1
@@ -80,173 +72,143 @@ graph TD
 
 ### 1. Iterative Improvement Process
 
-Each resume section undergoes up to 5 improvement iterations:
+Each resume section undergoes systematic improvement:
 
 ```python
-# Simplified agent workflow
-for section in ['skills', 'education', 'experience', 'projects']:
-    for iteration in range(1, 6):
-        # Rotate perspectives for diverse analysis
-        perspective = perspectives[iteration % len(perspectives)]
+# Actual agent workflow from resume_agent.py
+for section_type in ['skills', 'education', 'experience', 'projects']:
+    # Run fabrication detection FIRST
+    fabrication_risk = await self._detect_fabrication_risk(content, job_analysis)
+    
+    if fabrication_risk['needs_clarification']:
+        request_clarification()
+        continue
+    
+    # Iterative improvement loop
+    for iteration in range(self.max_iterations):  # max_iterations = 5
+        perspective = self.perspective_rotation[iteration % len(perspectives)]
         
-        # Generate improvement
-        improved_content = await generate_improvement(
-            content=section_content,
-            perspective=perspective,
-            job_requirements=job_analysis
+        # Generate improvement with current perspective
+        improved_content = await self._generate_content_with_perspective(
+            content, section_type, job_analysis, perspective, iteration + 1
         )
         
         # Dual-system evaluation
-        primary_score = await primary_scoring(improved_content)  # Fast
-        judgment_analysis = judgment.evaluate(improved_content)  # Deep
+        primary_score = await self._score_content_quality(improved_content)
+        judgment_analysis = judgment.evaluate(improved_content)  # Async
         
         # Agent decision logic
-        if fabrication_detected(improved_content):
-            request_clarification()
+        if primary_score >= self.quality_threshold:  # quality_threshold = 90
+            accept_content()
             break
-        elif primary_score >= 80:
-            accept_version()
-            break
-        elif primary_score >= 60:
+        elif iteration < self.max_iterations - 1:
             continue  # Try next iteration
         else:
-            request_clarification()
-            break
+            # Use best available version
+            use_best_version()
 ```
 
 ### 2. Multi-Perspective Analysis
 
-The agent analyzes each section from different viewpoints:
+The agent analyzes each section from different analytical viewpoints:
 
-| Perspective | Focus Area | Key Improvements |
-|-------------|------------|------------------|
-| **Hiring Manager** | Job relevance and impact | Aligns content with job requirements |
-| **Technical Lead** | Technical skills and depth | Emphasizes technical competencies |
-| **HR Recruiter** | ATS and initial screening | Optimizes keywords and formatting |
-| **ATS Optimizer** | Keyword optimization | Ensures machine readability |
-| **Industry Expert** | Domain-specific improvements | Adds industry-relevant enhancements |
-| **Executive Coach** | Professional presentation | Refines language and structure |
+| Perspective | Implementation | Focus Area |
+|-------------|---------------|------------|
+| **Hiring Manager** | `AnalysisPerspective.HIRING_MANAGER` | Job relevance and impact |
+| **Technical Lead** | `AnalysisPerspective.TECHNICAL_LEAD` | Technical skills and depth |
+| **HR Recruiter** | `AnalysisPerspective.HR_RECRUITER` | ATS and initial screening |
+| **ATS Optimizer** | `AnalysisPerspective.ATS_OPTIMIZER` | Keyword optimization |
+| **Industry Expert** | `AnalysisPerspective.INDUSTRY_EXPERT` | Domain-specific improvements |
+| **Executive Coach** | `AnalysisPerspective.EXECUTIVE_COACH` | Professional presentation |
 
 ### 3. Anti-Fabrication System
 
-Every suggestion undergoes rigorous verification to prevent hallucinations:
+Every improvement undergoes rigorous verification in `_detect_fabrication_risk()`:
 
-- **Content Preservation**: Maintains factual accuracy of original content
-- **Achievement Verification**: Prevents addition of non-existent accomplishments
-- **Experience Validation**: Ensures no false work history additions
-- **Skill Verification**: Avoids claiming non-mentioned technical skills
-- **Metric Protection**: Blocks fabricated performance numbers/percentages
+**Critical Fabrication Detection:**
+- Specific percentage claims not in original content
+- Quantified metrics or achievements not provided by user
+- New technologies/skills absent from original content  
+- Entirely new projects, roles, or experiences
+- Specific company achievements or business metrics
+
+**Safe Improvements (Always Allowed):**
+- Professional rephrasing of existing content
+- Formatting and organization improvements
+- Better wording without adding claims
+- Industry-standard terminology for existing concepts
+- Grammar and clarity improvements
 
 ## Judgment SDK Integration
 
-ResumeWise integrates deeply with the **Judgment Labs SDK** for comprehensive observability and quality assurance.
+ResumeWise integrates with the **Judgment Labs SDK** for comprehensive observability:
 
-### SDK Architecture
-
-```python
-# Core Judgment integration in resume_agent.py
-from judgeval.common.tracer import Tracer, wrap
-from judgeval.scorers import (
-    AnswerRelevancyScorer,
-    FaithfulnessScorer,
-    AnswerCorrectnessScorer,
-    HallucinationScorer
-)
-
-# Initialize Judgment tracer
-judgment = Tracer(
-    api_key=os.getenv("JUDGMENT_API_KEY"),
-    project_name="resume-critic-ai",
-    enable_monitoring=True,
-    deep_tracing=True
-)
-
-# Wrap OpenAI client for automatic tracing
-self.client = wrap(AsyncOpenAI(api_key=api_key))
-```
-
-### Comprehensive Monitoring Features
-
-#### Real-time Trace Visualization
-```
-resume_analysis_session (52.48s) [$0.002]
-├── section_improvement (Skills) (12.3s)
-│   ├── OPENAI_API_CALL (3.94s) - Content Generation
-│   ├── OPENAI_API_CALL (3.84s) - Quality Evaluation  
-│   ├── OPENAI_API_CALL (2.1s) - Fabrication Check
-│   └── ✅ Iteration Accepted (Score: 85)
-├── section_improvement (Education) (15.2s)
-├── section_improvement (Experience) (18.7s)
-└── section_improvement (Projects) (22.1s)
-```
-
-#### Quality Metrics Dashboard
-
-| Metric | Threshold | Purpose |
-|--------|-----------|---------|
-| **Structure Accuracy** | 0.8 | Professional formatting and organization |
-| **Job Relevance** | 0.6 | Alignment with job requirements |
-| **Formatting Quality** | 0.7 | ATS compatibility and readability |
-| **Content Faithfulness** | 0.9 | No hallucinations or fabrications |
-| **Clarity & Conciseness** | 0.7 | Clear, impactful communication |
-| **Improvement Quality** | 0.1 | Overall enhancement effectiveness |
-
-#### Automated Pattern Detection
-
-The Judgment SDK automatically detects and alerts on:
-
-- **Fabrication Patterns**: "5+ failed experience suggestions in a row"
-- **Quality Degradation**: Dropping scores across iterations
-- **Performance Issues**: Unusually long processing times
-- **Cost Anomalies**: Unexpected API usage spikes
-- **Error Clusters**: Repeated failures in specific sections
-
-#### Advanced Analytics
-
-Access comprehensive insights at [platform.judgmentlabs.ai](https://platform.judgmentlabs.ai):
-
-1. **Traces Tab**: Complete agent execution flows with cost tracking
-2. **Evaluations Tab**: Quality scores, pass/fail rates, and trends
-3. **Monitoring Tab**: Agent actions, error patterns, and alerts
-4. **Analytics Tab**: Performance trends, cost analysis, and usage patterns
-
-### Judgment SDK Configuration
+### Core Integration
 
 ```python
-# Environment variables for Judgment integration
-JUDGMENT_API_KEY=your_judgment_api_key        # Required for tracing
-JUDGMENT_ORG_ID=your_organization_id          # Required for team access
-JUDGMENT_MONITORING=true                      # Enable real-time monitoring
-JUDGMENT_EVALUATIONS=true                     # Enable quality evaluations
+# From resume_agent.py
+from judgeval.common.tracer import wrap
+from .judgment_config import get_judgment_tracer, get_judgment_evaluator
 
-# Optional: Advanced configuration
-JUDGMENT_PROJECT_NAME="resume-critic-ai"     # Custom project name
-JUDGMENT_DEEP_TRACING=true                   # Detailed trace capture
-JUDGMENT_ASYNC_EVALUATION=true               # Non-blocking evaluations
+# Initialize with fallback support
+try:
+    self.client = wrap(AsyncOpenAI(api_key=api_key))
+    judgment = get_judgment_tracer()
+    evaluator = get_judgment_evaluator()
+except ImportError:
+    # Graceful fallback when SDK not available
+    self.client = AsyncOpenAI(api_key=api_key)
 ```
 
-## Technical Stack
+### Monitoring Capabilities
+
+When enabled, the system provides:
+
+#### Real-time Tracing
+- Complete trace of all LLM calls and agent decisions
+- Section-by-section analysis visualization
+- Performance metrics and cost tracking
+
+#### Quality Evaluation
+- **Structure Accuracy**: Professional formatting assessment
+- **Job Relevance**: Alignment with job requirements
+- **Content Faithfulness**: Verification of no fabrications
+- **Formatting Quality**: ATS compatibility
+- **Clarity & Conciseness**: Communication effectiveness
+
+#### Pattern Detection
+- Fabrication attempt detection
+- Quality improvement patterns
+- User interaction analytics
+
+### Environment Configuration
+
+```bash
+# Required for core functionality
+OPENAI_API_KEY=your_openai_api_key
+
+# Optional for enhanced observability
+JUDGMENT_API_KEY=your_judgment_api_key
+JUDGMENT_ORG_ID=your_organization_id
+```
+
+## Technical Implementation
 
 ### Backend (Python 3.11+)
 - **Framework**: FastAPI 0.109.2 for high-performance API
-- **AI Models**: OpenAI GPT-4o and GPT-4o-mini
-- **Agent Framework**: Custom iterative agentic system
-- **Monitoring**: Judgment Labs SDK integration
-- **Processing**: pdfplumber for PDF parsing and text analysis
+- **AI Models**: OpenAI GPT-4o-mini for all LLM operations
+- **Agent Logic**: Custom iterative improvement system in `resume_agent.py`
+- **Processing**: pdfplumber for PDF parsing and text extraction
 - **Validation**: Pydantic for request/response validation
+- **Observability**: Judgment Labs SDK integration with fallback support
 
 ### Frontend (React/Next.js)
 - **Framework**: Next.js 15.2.4 with App Router
+- **Language**: TypeScript for type safety
 - **Styling**: Tailwind CSS with shadcn/ui components
-- **State Management**: React hooks and context
-- **File Upload**: Drag-and-drop PDF processing
-- **UI Components**: Modern, accessible design system
-
-### Observability & Monitoring
-- **Tracing**: Automatic LLM call tracing via Judgment SDK
-- **Evaluation**: Real-time quality assessment with custom scorers
-- **Monitoring**: Agent action logging and pattern detection
-- **Analytics**: Performance metrics, cost tracking, and trend analysis
+- **State Management**: React hooks for session management
+- **File Upload**: Supports PDF, DOC, DOCX, TXT with validation
+- **Real-time UI**: Progress tracking and clarification modals
 
 ## Quick Start
 
@@ -254,7 +216,7 @@ JUDGMENT_ASYNC_EVALUATION=true               # Non-blocking evaluations
 - Python 3.11 or higher
 - Node.js 18 or higher
 - OpenAI API key
-- Judgment Labs API key (optional but recommended)
+- Judgment Labs API key (optional for enhanced observability)
 
 ### One-Command Setup
 
@@ -267,12 +229,12 @@ chmod +x start.sh
 ```
 
 The `start.sh` script will:
-1. ✅ Check prerequisites (Python, Node.js, npm)
-2. ✅ Setup Python virtual environment
-3. ✅ Install all dependencies
-4. ✅ Create environment configuration
-5. ✅ Start both backend (port 8000) and frontend (port 3000)
-6. ✅ Verify services are running
+1. Check prerequisites (Python, Node.js, npm)
+2. Setup Python virtual environment
+3. Install all dependencies
+4. Create environment configuration
+5. Start backend (port 8000) and frontend (port 3000)
+6. Verify services are running
 
 ### Manual Setup
 
@@ -286,25 +248,11 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install --upgrade pip
 pip install -r requirements.txt
 
-# Configure environment variables
+# Configure environment
 cp .env.example .env
-```
-
-Edit `.env` with your API keys:
-```bash
-# Required: OpenAI Configuration
-OPENAI_API_KEY=sk-your_openai_api_key_here
-
-# Recommended: Judgment Labs Configuration  
-JUDGMENT_API_KEY=your_judgment_api_key_here
-JUDGMENT_ORG_ID=your_judgment_org_id_here
-
-# Optional: Monitoring Configuration
-JUDGMENT_MONITORING=true
-JUDGMENT_EVALUATIONS=true
+# Edit .env with your OPENAI_API_KEY
 ```
 
 Start the backend:
@@ -326,36 +274,33 @@ npm run dev
 
 ### 3. Access Application
 
-- **Frontend Application**: http://localhost:3000
+- **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
-- **Judgment Dashboard**: https://platform.judgmentlabs.ai
+- **Health Check**: http://localhost:8000/health
 
 ## Usage Guide
 
 ### Basic Workflow
 
-1. **Upload Resume**: Drag and drop a PDF file
-2. **Add Job Description**: Paste the target job description
+1. **Upload Resume**: Drag and drop PDF/DOC/DOCX/TXT file
+2. **Add Job Description**: Paste the target job posting
 3. **Start Analysis**: Click "Begin Analysis"
-4. **Provide Clarifications**: Answer questions when prompted
-5. **Review Changes**: Accept or reject suggested improvements
+4. **Provide Clarifications**: Answer questions when fabrication risks are detected
+5. **Review Changes**: Accept or reject improvements for each section
 6. **Download Result**: Get your improved resume
 
 ### Human-in-the-Loop Clarification
 
-When the agent detects potential fabrication risks, it will ask for clarification:
+When fabrication risks are detected, you'll see:
 
 ```
 ❓ Clarification Needed: Skills Section
 
-The job requires "Docker containerization experience" but this isn't 
+The job requires "Docker containerization" but this technology isn't 
 mentioned in your current skills. Do you have Docker experience?
 
-Options:
-- "Yes, I have 2 years of Docker experience with Kubernetes"
-- "No, I don't have Docker experience"
-- "I have basic exposure through coursework"
+Please provide details or confirm you don't have this experience.
 ```
 
 ### API Endpoints
@@ -363,128 +308,66 @@ Options:
 | Endpoint | Method | Purpose |
 |----------|---------|---------|
 | `/health` | GET | Service health check |
-| `/api/start-analysis` | POST | Begin resume analysis |
-| `/api/analyze-section` | POST | Get section analysis results |
+| `/api/start-analysis` | POST | Begin resume analysis session |
+| `/api/analyze-section` | POST | Get specific section analysis |
 | `/api/provide-clarification` | POST | Submit user clarification |
 | `/api/accept-changes` | POST | Accept/reject section changes |
 | `/api/generate-final-resume` | POST | Generate final improved resume |
 | `/api/session-status/{id}` | GET | Check session status |
 
-## Configuration & Tuning
+## Configuration
 
 ### Agent Parameters
 
 Key settings in `backend/app/core/resume_agent.py`:
 
 ```python
-# Iteration Settings
-max_iterations = 5              # Maximum improvement cycles per section
-quality_threshold = 90          # Target quality score
+# Iteration configuration
+self.max_iterations = 5          # Maximum improvement cycles per section
+self.quality_threshold = 90      # Target quality score for acceptance
 
-# Decision Thresholds
-accept_threshold = 80           # Auto-accept above this score
-retry_threshold = 60            # Retry between 60-79
-clarify_threshold = 60          # Request clarification below 60
-
-# Evaluation Thresholds (Judgment SDK)
-structure_accuracy = 0.8        # Professional formatting
-job_relevance = 0.6            # Job description alignment
-formatting_quality = 0.7       # ATS compatibility  
-content_faithfulness = 0.9     # Anti-fabrication
-clarity_conciseness = 0.7      # Communication quality
+# Analysis configuration
+self.analysis_order = [          # Section processing order
+    SectionType.SKILLS,
+    SectionType.EDUCATION,
+    SectionType.EXPERIENCE,
+    SectionType.PROJECTS
+]
 ```
 
-### Performance Tuning
+### Model Configuration
 
 ```python
-# OpenAI API Configuration
-OPENAI_TIMEOUT = 60.0          # Request timeout
-OPENAI_MAX_RETRIES = 3         # Retry failed requests
-
-# Judgment Configuration
-JUDGMENT_BATCH_SIZE = 10       # Evaluation batch size
-JUDGMENT_ASYNC_TIMEOUT = 30    # Async evaluation timeout
+# OpenAI configuration
+model="gpt-4o-mini"             # Used for all LLM operations
+temperature=0.1                 # Low temperature for consistent results
+timeout=60.0                    # Request timeout in seconds
+max_retries=3                   # Retry configuration
 ```
-
-## Performance & Monitoring
-
-### Expected Performance
-- **Analysis Time**: 45-60 seconds per resume
-- **Cost per Analysis**: ~$0.002 (OpenAI API)
-- **Success Rate**: 85-95% (sections improved without clarification)
-- **Accuracy**: 95%+ (no fabricated content)
-- **Iteration Average**: 2.3 iterations per section
-
-### Monitoring Dashboard
-
-The Judgment Labs dashboard provides:
-
-#### Real-time Metrics
-- Active analysis sessions
-- Average processing time
-- Cost per analysis
-- Success/failure rates
-
-#### Quality Trends
-- Section improvement scores over time
-- Fabrication detection rates
-- User clarification frequency
-- Agent decision accuracy
-
-#### Performance Analytics
-- API response times
-- Token usage patterns
-- Error rate analysis
-- Cost optimization insights
-
-### Key Metrics to Track
-- Section improvement success rates
-- Average iterations per section  
-- Primary scoring accuracy
-- Pattern detection alerts
-- Cost per successful analysis
-- Human-in-the-loop engagement rate
 
 ## Security & Privacy
 
 ### Data Protection
 - **No Data Storage**: Resume content processed in memory only
-- **HTTPS Only**: All API communications encrypted
-- **Environment Isolation**: Separate dev/prod configurations
-- **Content Verification**: Prevents fabricated information injection
-- **Audit Trails**: Complete trace of all agent decisions
+- **Session Management**: Temporary session data cleared after completion
+- **Environment Variables**: Secure API key management
+- **Content Verification**: Prevents injection of fabricated information
 
 ### API Security
-- **API Key Authentication**: Required for OpenAI and Judgment access
-- **CORS Protection**: Configured for development/production
-- **Rate Limiting**: Built into OpenAI client
-- **Request Validation**: Pydantic schema validation
-
-### Privacy Considerations
-- Resume content never logged or stored permanently
-- Session data cleared after completion
-- API keys secured via environment variables
-- Judgment traces can be configured for data retention policies
+- **Authentication**: OpenAI and Judgment API key authentication
+- **CORS Configuration**: Properly configured for development/production
+- **Request Validation**: Comprehensive Pydantic schema validation
+- **Error Handling**: Secure error responses without data leakage
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### "OPENAI_API_KEY not set" Error
+#### OpenAI API Key Error
 ```bash
-# Solution: Set your OpenAI API key
+# Set your OpenAI API key
 export OPENAI_API_KEY=sk-your_key_here
 # Or add to backend/.env file
-```
-
-#### Judgment Integration Issues
-```bash
-# Check Judgment configuration
-curl -s https://api.judgmentlabs.ai/health
-
-# Verify environment variables
-echo $JUDGMENT_API_KEY
-echo $JUDGMENT_ORG_ID
 ```
 
 #### Port Already in Use
@@ -492,130 +375,85 @@ echo $JUDGMENT_ORG_ID
 # Kill existing processes
 lsof -ti:8000 | xargs kill  # Backend
 lsof -ti:3000 | xargs kill  # Frontend
-
-# Or use different ports
-uvicorn app.main:app --port 8001
-npm run dev -- --port 3001
 ```
 
-#### Package Installation Issues
+#### Dependencies Issues
 ```bash
-# Backend dependencies
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt --no-cache-dir
+# Backend
+pip install --upgrade pip
+pip install -r requirements.txt
 
-# Frontend dependencies  
+# Frontend
 rm -rf node_modules package-lock.json
 npm install
 ```
-
-#### Agent Performance Issues
-- Check OpenAI API status: https://status.openai.com
-- Monitor Judgment dashboard for errors
-- Verify model availability (GPT-4o, GPT-4o-mini)
-- Check rate limits and quotas
 
 ### Debug Mode
 
 Enable verbose logging:
 ```bash
-# Backend debug mode
 export LOG_LEVEL=DEBUG
 uvicorn app.main:app --reload --log-level debug
-
-# View Judgment traces
-# Visit: https://platform.judgmentlabs.ai/traces
 ```
-
-### Getting Help
-
-- **Documentation**: Check this README and inline code comments
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
-- **Monitoring**: [Judgment Platform](https://platform.judgmentlabs.ai)
-- **Support**: Contact via your preferred support channel
 
 ## Development
 
 ### Project Structure
 ```
 resume-critic-ai/
-├── backend/                 # FastAPI backend
+├── backend/                    # FastAPI backend
 │   ├── app/
-│   │   ├── core/           # Agent logic & configuration
-│   │   ├── utils/          # PDF parsing utilities
-│   │   └── main.py         # FastAPI application
-│   ├── tests/              # Comprehensive test suite
-│   └── requirements.txt    # Python dependencies
-├── frontend/               # Next.js frontend
-│   ├── app/               # Next.js app router
-│   ├── components/        # React components
-│   └── lib/               # Utility functions
-├── start.sh               # One-command setup script
-└── README.md              # This file
+│   │   ├── core/              # Agent logic & configuration
+│   │   │   ├── resume_agent.py        # Main agent implementation
+│   │   │   ├── judgment_config.py     # Judgment SDK integration
+│   │   │   └── logging_config.py      # Logging configuration
+│   │   ├── utils/             # Utilities
+│   │   │   └── pdf_parser.py          # PDF text extraction
+│   │   └── main.py            # FastAPI application
+│   ├── tests/                 # Test suite
+│   └── requirements.txt       # Python dependencies
+├── frontend/                  # Next.js frontend
+│   ├── app/                   # Next.js app router
+│   │   ├── page.tsx           # Main application
+│   │   └── layout.tsx         # App layout
+│   ├── components/            # React components
+│   │   └── ui/                # UI component library
+│   └── lib/                   # Utility functions
+├── start.sh                   # One-command setup script
+└── README.md                  # This documentation
 ```
-
-### Contributing
-
-We welcome contributions! Development workflow:
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
 
 ### Testing
 
 ```bash
 # Backend tests
 cd backend
-pytest tests/ -v --cov=app
+pytest tests/ -v
 
 # Frontend tests (if configured)
-cd frontend  
+cd frontend
 npm test
 ```
 
-## Deployment
+## Deployment Considerations
 
-### Environment Preparation
-
-Production deployment requires:
+### Production Requirements
 - Secure API key management
-- HTTPS configuration  
+- HTTPS configuration
 - Environment-specific CORS settings
-- Judgment production project setup
+- Monitoring and logging infrastructure
 
-### Docker Deployment (Optional)
-
-```dockerfile
-# Example Dockerfile for backend
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-
+### Docker Support
+The codebase can be containerized using standard Docker practices for FastAPI and Next.js applications.
 
 ## Acknowledgments
 
-- **[Judgment Labs](https://judgmentlabs.ai)** for the comprehensive observability platform and SDK
-- **[OpenAI](https://openai.com)** for the powerful GPT-4o and GPT-4o-mini models
-- **[FastAPI](https://fastapi.tiangolo.com)** for the high-performance Python web framework
-- **[Next.js](https://nextjs.org)** for the excellent React framework
-- **[shadcn/ui](https://ui.shadcn.com)** for the beautiful component library
-
-## Support & Community
-
-- **Bug Reports**: [GitHub Issues](https://github.com/your-repo/issues)
-- **Feature Requests**: [GitHub Discussions](https://github.com/your-repo/discussions)
-- **Monitoring**: [Judgment Platform](https://platform.judgmentlabs.ai)
-- **Documentation**: [API Docs](http://localhost:8000/docs) when running locally
+- **[Judgment Labs](https://judgmentlabs.ai)** for the observability platform and SDK
+- **[OpenAI](https://openai.com)** for the GPT-4o-mini model
+- **[FastAPI](https://fastapi.tiangolo.com)** for the Python web framework
+- **[Next.js](https://nextjs.org)** for the React framework
+- **[shadcn/ui](https://ui.shadcn.com)** for the component library
 
 ---
 
-**Built with care for better resumes and careers** 
+**Professional resume analysis with integrity and transparency** 
